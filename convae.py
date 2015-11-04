@@ -119,7 +119,7 @@ class PoolLayer():
 	A pooling layer.
 	"""
 
-	def __init__(self, factor, poolType='avg', unpool=False): #TODO: Make provision for upsampling.
+	def __init__(self, factor, poolType='avg', decode=False):
 		"""
 		Initialize the pooling layer.
 
@@ -128,7 +128,7 @@ class PoolLayer():
 			factor: Tuple repr. pooling factor.
 			poolType: String repr. the pooling type i.e 'avg' or 'max'.
 		"""
-		self.type, self.factor, self.grad = poolType, factor, None
+		self.type, self.factor, self.grad, self.decode = poolType, factor, None, decode
 
 
 	def bprop(self, dEdo):
@@ -144,10 +144,16 @@ class PoolLayer():
 		--------
 			A N x k x x m1 x m1 array of errors.
 		"""
-		if self.type == 'max':
-			return np.kron(dEdo, np.ones(self.factor)) * self.grad
+		if self.decode:
+			if self.type == 'max':
+				return np.kron(dEdo, np.ones(self.factor)) #Sum errors down
+			else:
+				# Downsample
 		else:
-			return np.kron(dEdo, np.ones(self.factor)) * (1.0 / np.prod(self.factor))
+			if self.type == 'max':
+				return np.kron(dEdo, np.ones(self.factor)) * self.grad
+			else:
+				return np.kron(dEdo, np.ones(self.factor)) * (1.0 / np.prod(self.factor))
 			
 
 	def update(self, eps_w, eps_b, mu, l2, useRMSProp, RMSProp_decay, minsq_RMSProp):
@@ -176,16 +182,22 @@ class PoolLayer():
 		-------
 			A N x k x m2 x n2 array of output plains.
 		"""
-		if self.type == 'max':
-			_data = np.asarray(data, dtype='float32')
-			x = tn.ftensor4('x')
-			f = thn.function([], max_pool(x, self.factor), givens={x: shared(_data)})
-			g = thn.function([], max_pool_same(x, self.factor)/x, givens={x: shared(_data + 0.0000000001)})
-			self.grad = g()
-			self.grad[np.where(np.isnan(self.grad))] = 0
-			return f()
+		if self.unpoolInstead:
+			if self.type == 'max':
+				return np.kron(data, np.ones(self.factor))
+			else:
+				return np.kron(data, np.ones(self.factor)) * (1.0 / np.prod(self.factor)) #Upsample
 		else:
-			return downsample(data, (1, 1, self.factor[0], self.factor[1]))
+			if self.type == 'max':
+				_data = np.asarray(data, dtype='float32')
+				x = tn.ftensor4('x')
+				f = thn.function([], max_pool(x, self.factor), givens={x: shared(_data)})
+				g = thn.function([], max_pool_same(x, self.factor)/x, givens={x: shared(_data + 0.0000000001)})
+				self.grad = g()
+				self.grad[np.where(np.isnan(self.grad))] = 0
+				return f()
+			else:
+				return downsample(data, (1, 1, self.factor[0], self.factor[1]))
 
 
 class ConvLayer():
@@ -552,19 +564,19 @@ def testMnist():
 
 	print "Initializing network..."
 	# Ensure size of output maps in preceeding layer is equals to the size of input maps in next layer.
-	# with great power comes great responsibility. Use it wisely: DECODER MUST BE A REFLECTION OF ENCODER!
+	# With great power comes great responsibility, so use it wisely: DECODER MUST BE A REFLECTION OF ENCODER!
 	layers = {
 		"decoder":[
-				DecodeLayer(6, 1, (6, 6), decode=True),
+				ConvLayer(6, 1, (6, 6), decode=True),
 				PoolLayer((2, 2)),
-				DecodeLayer(16, 6, (5, 5), decode=True),
-				PoolLayer((2, 2)),
+				ConvLayer(16, 6, (5, 5), decode=True),
+				PoolLayer((2, 2))
 			],
 		"encoder":[
 				PoolLayer((2, 2)),
-				EncodeLayer(16, 6, (5,5)),
+				EncodeLayer(16, 6, (5,5), decode=False),
 				PoolLayer((2, 2)), #Subsampling only!
-				ConvLayer(6, 1, (6,6)) #Ensure result is an integer!
+				ConvLayer(6, 1, (6,6), decode=False) #Ensure result is an integer!
 			]
 	}
 
