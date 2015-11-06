@@ -21,6 +21,7 @@ import theano.tensor.nnet.conv as conv
 import matplotlib.pyplot as plt
 import cPickle as cpkl
 from theano import shared
+from theano.tensor.signal.conv import conv2d as conv2
 from theano.tensor.signal.downsample import max_pool_2d as max_pool
 from theano.tensor.signal.downsample import max_pool_2d_same_size as max_pool_same
 from skimage.transform import downscale_local_mean as downsample
@@ -90,6 +91,35 @@ def fastConv2d(data, kernel, convtype='valid', stride=(1, 1)):
 	return f()
 
 
+def localSum(data, factor):
+	"""
+	Sum a local patch of data as specified by factor.
+
+	Args:
+	-----
+		data: A N x k x m1 x n1 array.
+		factor: Tuple specifying size of patch.
+
+	Returns:
+	--------
+		A N x k x m2 x n2 array representing the output.
+	"""
+
+	N, l, m2, n2 = data.shape
+	f1, f2 = self.factor
+
+	sampled = np.zeros((N, l, m2 / f1, n2 / f2))
+	d = tn.ftensor3('d')
+	k = tn.ftensor3('k')
+
+	for channel in xrange(l): #can replace with scan()
+		_data, _kernel =  np.asarray(data[:, channel, :, :], dtype='float32'), np.asarray(np.ones(self.factor), dtype='float32')
+		f = thn.function([], conv2(d, k, None, None, 'valid', self.factor), givens={d: shared(_data), k: shared(_kernel)})
+		sampled[:, channel, :, :] = f()
+	
+	return sampled
+
+
 def rot2d90(data, no_rots):
 	"""
 	Rotate the 2d planes in a 4d array by 90 degrees no_rots times.
@@ -121,7 +151,7 @@ class PoolLayer():
 
 	def __init__(self, factor, poolType='avg', decode=False):
 		"""
-		Initialize the pooling layer.
+		Initialize pooling layer.
 
 		Args:
 		-----
@@ -138,17 +168,20 @@ class PoolLayer():
 
 		Args:
 		-----
-			dEdo: A N x k x m2 x n2 array of errors from prev layers.
+			dEdo: A N x l x m2 x n2 array of errors from prev layers.
 
 		Returns:
 		--------
 			A N x k x x m1 x m1 array of errors.
 		"""
+		N, l, m2, n2 = dEdo.shape
+		f1, f2 = self.factor
+
 		if self.decode:
 			if self.type == 'max':
-				return np.kron(dEdo, np.ones(self.factor)) #Sum errors down
+				return localSum(dEdo, self.factor)
 			else:
-				# Downsample
+				return downsample(data, (1, 1, self.factor[0], self.factor[1]))
 		else:
 			if self.type == 'max':
 				return np.kron(dEdo, np.ones(self.factor)) * self.grad
@@ -182,7 +215,7 @@ class PoolLayer():
 		-------
 			A N x k x m2 x n2 array of output plains.
 		"""
-		if self.unpoolInstead:
+		if self.decode:
 			if self.type == 'max':
 				return np.kron(data, np.ones(self.factor))
 			else:
@@ -251,7 +284,7 @@ class ConvLayer():
 		else:
 			dEds = dEdo * np.where((self.maps + self.bias) > 0, 1, 0)
 
-		dEds = np.kron(dEds, self.d_stride) #TODO: Investigate stride effect.
+		dEds = np.kron(dEds, self.d_stride) #TODO: Investigate stride effect. Esp. with conv.
 		if self.stride[0] > 1:
 			dEds = dEds[:, :, :-(self.stride[0] - 1), :-(self.stride[1] - 1)]
 
@@ -322,7 +355,7 @@ class ConvLayer():
 		elif self.o_type == 'sigmoid':
 			return sigmoid(self.maps + self.bias)
 
-		return relu(self.maps + self.bias) #TODO: Investigate relu unit effect.
+		return relu(self.maps + self.bias)
 
 
 class ConvAE():
@@ -563,20 +596,15 @@ def testMnist():
 	test_label = data['test_label']
 
 	print "Initializing network..."
-	# Ensure size of output maps in preceeding layer is equals to the size of input maps in next layer.
-	# With great power comes great responsibility, so use it wisely: DECODER MUST BE A REFLECTION OF ENCODER!
+
 	layers = {
 		"decoder":[
 				ConvLayer(6, 1, (6, 6), decode=True),
-				PoolLayer((2, 2)),
-				ConvLayer(16, 6, (5, 5), decode=True),
 				PoolLayer((2, 2))
 			],
 		"encoder":[
 				PoolLayer((2, 2)),
-				EncodeLayer(16, 6, (5,5), decode=False),
-				PoolLayer((2, 2)), #Subsampling only!
-				ConvLayer(6, 1, (6,6), decode=False) #Ensure result is an integer!
+				ConvLayer(6, 1, (6,6), decode=False)
 			]
 	}
 
