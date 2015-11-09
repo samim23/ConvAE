@@ -26,7 +26,6 @@ from theano.tensor.signal.downsample import max_pool_2d as max_pool
 from theano.tensor.signal.downsample import max_pool_2d_same_size as max_pool_same
 from skimage.transform import downscale_local_mean as downsample
 from copy import deepcopy
-from mlp import *
 from util import *
 
 
@@ -69,6 +68,91 @@ def displayCov(data):
 			sps[i, j].imshow(cov[y : y + (N / k), x : x + (N / k)], aspect='auto')
 
 	plt.show()
+
+
+def sigmoid(data):
+	"""
+	Run The sigmoid activation function over the input data.
+
+	Args:
+	----
+		data : A k x N array.
+
+	Returns:
+	-------
+		A k x N array.
+	"""
+	return 1 / (1 + np.exp(-data))
+
+
+def softmax(data):
+	"""
+	Run the softmax activation function over the input data.
+
+	Args:
+	----
+		data : A k x N array.
+
+	Returns:
+	-------
+		A k x N array.
+	"""
+	k, N = data.shape
+	e = np.exp(data)
+	return e/np.sum(e, axis=0).reshape(1, N)
+
+
+def sech2(data):
+	"""
+	Find the hyperbolic secant function over the input data.
+
+	Args:
+	-----
+		data : A k x N array.
+
+	Returns:
+	--------
+		A k x N array.
+	"""
+	return np.square(1 / np.cosh(data))
+
+
+def relu(data):
+	"""
+	Perform rectilinear activation on the data.
+
+	Args:
+	-----
+		data: A k x N array.
+
+	Returns:
+	--------
+		A k x N array.
+	"""
+	return np.maximum(data, 0)
+
+
+def epsilon_decay(eps, phi, satr, itr, intvl):
+	"""
+	Decay the given learn rate given.
+
+	Args:
+	-----
+		eps: Learning rate.
+		phi: Learning decay.
+		satr: Iteration to saturate learning rate or string 'Inf'.
+		itr: Current iteration.
+		intvl: Decay interval i.e 0 (constant), 1 (progressive) etc.
+
+	Returns:
+	--------
+		The learning rate to apply.
+	"""
+	if intvl != 0:
+		i = min(itr, float(satr)) / intvl
+		return eps / (1.0 + (i * phi))
+	else:
+		return eps
 
 
 def fastConv2d(data, kernel, convtype='valid', stride=(1, 1)):
@@ -142,6 +226,27 @@ def rot2d90(data, no_rots):
 	result = result.reshape(N, k, m, n)
 
 	return result
+
+
+def averageErrors(errors):
+	"""
+	Calculate and return the average errors.
+
+	Args:
+	-----
+		errors: A no_imgs x img_length x img_width x no_channels array of errors.
+
+	Returns:
+	--------
+		A scalar value repr. overall error.
+	"""
+
+	avg_error = np.average(errors, 1)
+	avg_error = np.average(avg_error, 0)
+	avg_error = np.average(avg_error, 1)
+	avg_error = np.average(avg_error, 0)
+
+	return avg_error
 
 
 class PoolLayer():
@@ -244,7 +349,6 @@ class ConvLayer():
 
 		Args:
 		-----
-			eord: String repr. type of the layer - "encode" or "decode".
 			noKernels: No. feature maps in layer.
 			channels: No. input planes in layer or no. channels in input image.
 			kernelSize: Tuple repr. the size of a kernel.
@@ -252,6 +356,7 @@ class ConvLayer():
 			outputType: String repr. type of non-linear activation i.e 'relu', 'tanh' or 'sigmoid'.
 			init_w: Std dev of initial weights drawn from a std Normal distro.
 			init_b: Initial value of biases.
+			decode: Boolean indicator whether layer is encoder or decoder.
 		"""
 		self.decode = decode
 		self.o_type = outputType
@@ -363,37 +468,38 @@ class ConvAE():
 	Convolutional Autoencoder class.
 	"""
 
-	def __init__(self, layers={}):
+	def __init__(self, layers=[]):
 		"""
-		Initialize network.
+		Initialize autoencoder.
 
 		Args:
 		-----
-			layers: Dict. of fully connected and convolutional layers arranged heirarchically.
+			layers: List of convolutional and pooling layers arranged heirarchically.
 		"""
-		self.layers, self.div_x_shape, self.div_ind = [], None, 0
-		if layers != {} and len(layers["decoder"]) == len(layers["encoder"]):
-			self.layers = deepcopy(layers["decoder"]) + deepcopy(layers["encoder"])
-			self.div_x_shape = None
-			self.div_ind = len(layers["decoder"])
+		self.layers, self.encodeInd = [], 0
+
+		if layers != []:
+
+			for ind in xrange(len(layers), -1, -1): # get decoder
+				self.layers.append(self.reflect(layers[ind]))
+
+			self.layers = self.layers + deepcopy(layers) # get encoder
+			self.encodeInd = len(layers)
 
 
-	def train(self, data, params):
+	def train(self, data, test, params):
 		"""
-		Train autoencoder to compress data using the given params.
+		Train autoencoder to learn a compressed feature representation of data using
+		the given params.
 
 		Args:
 		-----
 			data : A no_imgs x img_length x img_width x no_channels array of images.
+			test : A no_imgs x img_length x img_width x no_channels array of images.
 			params: A dictionary of training parameters.
 		"""
 
-		#Notify fc of training.
-		for layer in self.layers[0 : self.div_ind]:
-			layer.train = True
-
-		#Check the parameters
-
+		# check the parameters
 		print "Training network..."
 		plt.ion()
 		N, itrs, errors = train_data.shape[0], 0, []
@@ -401,21 +507,18 @@ class ConvAE():
 		for epoch in xrange(params['epochs']):
 
 			avg_errors = []
-
 			start, stop = range(0, N, params['batch_size']), range(params['batch_size'], N, params['batch_size'])
 
 			for i, j in zip(start, stop):
  
-				error = self.reconstruct(data[i:j]) - data[i:j] #Can only use l2 norm.
-				#TODO: Save reconstruction at some point.
+				error = self.reconstruct(data[i:j]) - data[i:j] # use l2 norm.
 				self.backprop(error)
 				self.update(params, itrs)
 
-				# display average reconstruction error
-				# avg_error
-				print '\r| Epoch: {:5d}  |  Iteration: {:8d}  |  Avg Reconst Error: {:.2f}|'.format(epoch, itrs, avg_error)
+				avg_error = averageError(error)
+				print '\r| Epoch: {:5d}  |  Iteration: {:8d}  |  Avg Reconstruction Error: {:.2f}|'.format(epoch, itrs, averageError(error))
 				if epoch != 0 and epoch % 100 == 0:
-  					print '--------------------------------------------------------------------'
+  					print '---------------------------------------------------------------------------'
   				if params['view_kernels']:
   					self.displayKernels()
 
@@ -427,11 +530,10 @@ class ConvAE():
 			self.backprop(error)
 			self.update(params, itrs)
 
-			# display average reconstruction error
-			# avg_error
-			print '\r| Epoch: {:5d}  |  Iteration: {:8d}  |  Avg Reconst Error: {:.2f} |'.format(epoch, itrs, avg_error)
+			avg_error = averageError(error)
+			print '\r| Epoch: {:5d}  |  Iteration: {:8d}  |  Avg Reconstruction Error: {:.2f} |'.format(epoch, itrs, avg_error)
 			if epoch != 0 and epoch % 100 == 0:
-  				print '---------------------------------------------------------------------'
+  				print '----------------------------------------------------------------------------'
   			if params['view_kernels']:
   				self.displayKernels()
 
@@ -444,15 +546,15 @@ class ConvAE():
   			plt.xlabel('Epochs')
   			plt.ylabel('Reconstruction Error')
   			plt.plot(range(epoch + 1), errors, '-g')
-  			plt.axis([0, params['epochs'], 0, 1.00]) # TODO: Change Y-axis bound. Can't be beyond 255 on avg for img.
-  			plt.draw() #Add fucking legend later.
+  			plt.axis([0, params['epochs'], 0, 255])
+  			plt.draw()
 
-  		#Stop fc dropout after training.
-		for layer in self.layers[0 : self.div_ind]:
-			layer.train = False
 		plt.ioff()
 
-  		#Also add training intervals to save architecture.
+		reconstruction = self.reconstruct(test)
+		print '\r Average Reconstruction Error on test images: ', averageError(reconstruction - test)
+		self.displayReconstruction(reconstruction, params)
+
   		print "Saving model..."
   		#self.saveModel('mnist_cnn_1')
 
@@ -501,19 +603,11 @@ class ConvAE():
 		-----
 			params: Training parameters.
 		"""
-		fc, conv = params['fc'], params['conv']
+		eps_w = epsilon_decay(params['eps_w'], params['eps_decay'], params['eps_satr'], i, params['eps_intvl'])
+		eps_b = epsilon_decay(params['eps_b'], params['eps_decay'], params['eps_satr'], i, params['eps_intvl'])
 
-		eps_w = epsilon_decay(fc['eps_w'], fc['eps_decay'], fc['eps_satr'], i, fc['eps_intvl'])
-		eps_b = epsilon_decay(fc['eps_b'], fc['eps_decay'], fc['eps_satr'], i, fc['eps_intvl'])
-
-		for layer in self.layers[0 : self.div_ind]:
-			layer.update(eps_w, eps_b, fc['mu'], fc['l2'], fc['RMSProp'], fc['RMSProp_decay'], fc['minsq_RMSProp'])
-
-		eps_w = epsilon_decay(conv['eps_w'], conv['eps_decay'], conv['eps_satr'], i, conv['eps_intvl'])
-		eps_b = epsilon_decay(conv['eps_b'], conv['eps_decay'], conv['eps_satr'], i, conv['eps_intvl'])
-
-		for layer in self.layers[self.div_ind:]:
-			layer.update(eps_w, eps_b, conv['mu'], conv['l2'], conv['RMSProp'], conv['RMSProp_decay'], conv['minsq_RMSProp'])
+		for layer in self.layers:
+			layer.update(eps_w, eps_b, params['mu'], params['l2'], params['RMSProp'], params['RMSProp_decay'], params['minsq_RMSProp'])
 
 
 	def saveModel(self, filename):
@@ -525,8 +619,8 @@ class ConvAE():
 			filename: String repr. name of file.
 		"""
 		model = {
-			'decoder': self.layers[0 : self.div_ind],
-			'encoder': self.layers[self.div_ind :]
+			'network': self.layers,
+			'index': self.encodeInd
 		}
 
 		f = open(filename, 'w')
@@ -547,9 +641,8 @@ class ConvAE():
 		model = cpkl.load(f)
 
 		if model != {} and self.layers == []:
-			self.layers = model["decoder"] + model["encoder"]
-			self.div_x_shape = None
-			self.div_ind = len(model["decoder"])
+			self.layers = model["network"]
+			self.encodeInd = model["index"]
 
 		f.close()
 
@@ -581,67 +674,75 @@ class ConvAE():
 		plt.draw()
 
 
+	def displayReconstructions(self, imgs, params):
+		"""
+		Sample and display some of the reconstructed images.
+
+		Args:
+		-----
+			imgs: A no_imgs x img_length x img_width x img_channels array.
+			params: Model parameters. 
+		"""
+		pass
+
+
+	def reflect(self, layer):
+		"""
+		Get a reflected copy of the given encoding layer.
+
+		Args:
+		-----
+			layer: An encoding layer.
+
+		Returns:
+		--------
+			The corresponding decoding layer.
+		"""
+
+		if isinstance(layer, ConvLayer):
+			k = layer.kernels.shape
+			return ConvLayer(k[0], k[1], (k[2], k[3]), layer.stride, layer.o_type, layer.init_w, layer.init_b, True)
+		elif isinstance(layer, PoolLayer):
+			return PoolLayer(layer.type, layer.factor, True)
+
+
 def testMnist():
 	"""
-	Test cnn using the MNIST dataset.
+	Test autoencoder using the MNIST dataset.
 	"""
 
 	print "Loading MNIST images..."
 	data = np.load('data/cnnMnist.npz')
 	train_data = data['train_data'][0:1000].reshape(1000, 28, 28, 1)
 	valid_data = data['valid_data'][0:1000].reshape(1000, 28, 28, 1)
+	train_data = np.concatenate(train_data, valid_data)
 	test_data = data['test_data'].reshape(10000, 28, 28, 1)
-	train_label = data['train_label'][0:1000]
-	valid_label = data['valid_label'][0:1000]
-	test_label = data['test_label']
 
-	print "Initializing network..."
+	print "Creating network..."
 
-	layers = {
-		"decoder":[
-				ConvLayer(6, 1, (6, 6), decode=True),
-				PoolLayer((2, 2))
-			],
-		"encoder":[
+	layers = [
 				PoolLayer((2, 2)),
-				ConvLayer(6, 1, (6,6), decode=False)
+				ConvLayer(6, 1, (6,6))
 			]
-	}
 
 	params = {
 		'epochs': 20,
 		'batch_size': 500,
 		'view_kernels': True,
-
-		'fc':{
-			'eps_w': 0.0007,
-			'eps_b': 0.0007,
-			'eps_decay': 9,
-			'eps_intvl': 30,
-			'eps_satr': 'inf',
-			'mu': 0.7,
-			'l2': 0.95,
-			'RMSProp': True,
-			'RMSProp_decay': 0.9,
-			'minsq_RMSProp': 0.0
-		},
-
-		'conv': {
-			'eps_w': 0.0007,
-			'eps_b': 0.0007,
-			'eps_decay': 9,
-			'eps_intvl': 30,
-			'eps_satr': 'inf',
-			'mu': 0.7,
-			'l2': 0.95,
-			'RMSProp': True,
-			'RMSProp_decay': 0.9,
-			'minsq_RMSProp': 0
-		}
+		'eps_w': 0.0007,
+		'eps_b': 0.0007,
+		'eps_decay': 9,
+		'eps_intvl': 30,
+		'eps_satr': 'inf',
+		'mu': 0.7,
+		'l2': 0.95,
+		'RMSProp': True,
+		'RMSProp_decay': 0.9,
+		'minsq_RMSProp': 0
 	}
 
 	cnn = Cnn(layers)
-	cnn.train(train_data, train_label, valid_data, valid_label, test_data, test_label, params)
+	cnn.train(train_data, test_data, params)
 
 
 def testCifar10():
