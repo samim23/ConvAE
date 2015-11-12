@@ -1,4 +1,4 @@
-# Copyright (c) 2015 ev0, lautimothy
+# Copyright (c) 2015 ev0
 #
 # Permission to use, copy, modify, and distribute this software for any
 # purpose with or without fee is hereby granted, provided that the above
@@ -27,47 +27,6 @@ from theano.tensor.signal.downsample import max_pool_2d_same_size as max_pool_sa
 from skimage.transform import downscale_local_mean as downsample
 from copy import deepcopy
 from util import *
-
-
-def centerDataset(data):
-
-	new_data = np.transpose(data, (0, 3, 1, 2))
-	N, k, m, n = new_data.shape
-	new_data = new_data.reshape(N, np.prod(new_data.shape[1:]))
-	x = tn.fmatrix('x')
-	f = thn.function([], (x - tn.mean(x, axis=0)) / tn.var(x, axis=0), givens={x: shared(np.asarray(new_data, dtype='float32'))})
-	scaled_data = f()
-	# replace illegal values with 0.
-	scaled_data[np.where(np.isnan(scaled_data))] = 0
-	scaled_data = scaled_data.reshape(N, k, m, n)
-	scaled_data = np.transpose(scaled_data, (0, 2, 3, 1))
-
-	return scaled_data
-
-
-def displayCov(data):
-	"""
-	Display the covariance matrix of the pixels
-	across the image channels.
-
-	Args:
-	-----
-		data: No_imgs x img_height x img_width x no_channels array.
-	"""
-
-	new_data, k = np.transpose(data, (0, 3, 1, 2)), data.shape[3]
-	new_data = new_data.reshape(new_data.shape[0], np.prod(new_data.shape[1:]))
-	zero_data = new_data - np.mean(new_data, axis=0)
-	cov = np.cov(zero_data.T)
-
-	N = cov.shape[0]
-	f, sps = plt.subplots(k, k, sharex=True, sharey=True)
-	for i in xrange(0, k):
-		for j in xrange(0, k):
-			y, x = (N * i) / k, (N * j) / k
-			sps[i, j].imshow(cov[y : y + (N / k), x : x + (N / k)], aspect='auto')
-
-	plt.show()
 
 
 def sigmoid(data):
@@ -132,7 +91,7 @@ def relu(data):
 	return np.maximum(data, 0)
 
 
-def epsilon_decay(eps, phi, satr, itr, intvl):
+def epsilonDecay(eps, phi, satr, itr, intvl):
 	"""
 	Decay the given learn rate given.
 
@@ -175,33 +134,27 @@ def fastConv2d(data, kernel, convtype='valid', stride=(1, 1)):
 	return f()
 
 
-def localSum(data, factor):
+def strideUpsample(data, stride):
 	"""
-	Sum a local patch of data as specified by factor.
+	Stride image for convolutional upsampling.
 
 	Args:
 	-----
-		data: A N x k x m1 x n1 array.
-		factor: Tuple specifying size of patch.
+		data: An N x k x m x n array of images.
+		stride: Tuple repr. stride.
 
 	Returns:
 	--------
-		A N x k x m2 x n2 array representing the output.
+		An N x k x ((m x stride) - 1) x ((n x stride) - 1) array.
 	"""
+	kernel = np.zeros(stride)
+	kernel[0, 0] = 1
 
-	N, l, m2, n2 = data.shape
-	f1, f2 = self.factor
+	result = np.kron(data, kernel)
+	if stride[0] > 1: # clip last row & column of images
+		result = result[:, :, :-(stride[0] - 1), :-(stride[1] - 1)]
 
-	sampled = np.zeros((N, l, m2 / f1, n2 / f2))
-	d = tn.ftensor3('d')
-	k = tn.ftensor3('k')
-
-	for channel in xrange(l): #can replace with scan()
-		_data, _kernel =  np.asarray(data[:, channel, :, :], dtype='float32'), np.asarray(np.ones(self.factor), dtype='float32')
-		f = thn.function([], conv2(d, k, None, None, 'valid', self.factor), givens={d: shared(_data), k: shared(_kernel)})
-		sampled[:, channel, :, :] = f()
-	
-	return sampled
+	return result
 
 
 def rot2d90(data, no_rots):
@@ -217,7 +170,7 @@ def rot2d90(data, no_rots):
 	--------
 		A N x k x m x n array with each m x n plane rotated.
 	"""
-	#Stack, cut & place, rotate, cut & place, break.
+	# stack, cut & place, rotate, cut & place, break.
 	N, k, m, n = data.shape
 	result = data.reshape(N * k, m, n)
 	result = np.transpose(result, (2, 1, 0))
@@ -228,25 +181,32 @@ def rot2d90(data, no_rots):
 	return result
 
 
-def averageErrors(errors):
+def maxpool(data, factor, getPos=True):
 	"""
-	Calculate and return the average errors.
+	Return max pooled data and the pooled pixel positions.
 
 	Args:
 	-----
-		errors: A no_imgs x img_length x img_width x no_channels array of errors.
+		data: An N x k x m x n array.
+		factor: Pooling factor.
 
 	Returns:
 	--------
-		A scalar value repr. overall error.
+		An N x k x (m/factor) x (n/factor), N x k x m x n arrays.
 	"""
+	_data = np.asarray(data, dtype='float32')
+	x = tn.ftensor4('x')
+	f = thn.function([], max_pool(x, self.factor), givens={x: shared(_data)})
+	g = thn.function([], max_pool_same(x, self.factor)/x, givens={x: shared(_data + 0.0000000001)})
 
-	avg_error = np.average(errors, 1)
-	avg_error = np.average(avg_error, 0)
-	avg_error = np.average(avg_error, 1)
-	avg_error = np.average(avg_error, 0)
+	pooled = f()
+	if not getPos:
+		return pooled
 
-	return avg_error
+	positions = g()
+	positions[np.where(np.isnan(positions))] = 0
+	return pooled, positions
+
 
 
 class PoolLayer():
@@ -262,8 +222,9 @@ class PoolLayer():
 		-----
 			factor: Tuple repr. pooling factor.
 			poolType: String repr. the pooling type i.e 'avg' or 'max'.
+			decode: Boolean indicator if layer is encoder or decoder.
 		"""
-		self.type, self.factor, self.grad, self.decode = poolType, factor, None, decode
+		self.type, self.factor, self.positions, self.decode = poolType, factor, None, decode
 
 
 	def bprop(self, dEdo):
@@ -279,19 +240,18 @@ class PoolLayer():
 		--------
 			A N x k x x m1 x m1 array of errors.
 		"""
-		N, l, m2, n2 = dEdo.shape
-		f1, f2 = self.factor
-
 		if self.decode:
 			if self.type == 'max':
-				return localSum(dEdo, self.factor)
+				dE = maxpool(data, self.factor, False)
 			else:
-				return downsample(data, (1, 1, self.factor[0], self.factor[1]))
+				dE = downsample(dEdo, (1, 1, self.factor[0], self.factor[1])) * np.sum(self.factor)
 		else:
 			if self.type == 'max':
-				return np.kron(dEdo, np.ones(self.factor)) * self.grad
+				dE = np.kron(dEdo, np.ones(self.factor)) * self.positions
 			else:
-				return np.kron(dEdo, np.ones(self.factor)) * (1.0 / np.prod(self.factor))
+				dE = np.kron(dEdo, np.ones(self.factor)) * (1.0 / np.sum(self.factor))
+
+		return dE
 			
 
 	def update(self, eps_w, eps_b, mu, l2, useRMSProp, RMSProp_decay, minsq_RMSProp):
@@ -322,20 +282,16 @@ class PoolLayer():
 		"""
 		if self.decode:
 			if self.type == 'max':
-				return np.kron(data, np.ones(self.factor))
+				pooled = np.kron(data, np.ones(self.factor))
 			else:
-				return np.kron(data, np.ones(self.factor)) * (1.0 / np.prod(self.factor)) #Upsample
+				pooled = np.kron(data, np.ones(self.factor) * (1.0 / np.sum(self.factor)))
 		else:
 			if self.type == 'max':
-				_data = np.asarray(data, dtype='float32')
-				x = tn.ftensor4('x')
-				f = thn.function([], max_pool(x, self.factor), givens={x: shared(_data)})
-				g = thn.function([], max_pool_same(x, self.factor)/x, givens={x: shared(_data + 0.0000000001)})
-				self.grad = g()
-				self.grad[np.where(np.isnan(self.grad))] = 0
-				return f()
+				pooled, self.positions = maxpool(data, self.factor)
 			else:
-				return downsample(data, (1, 1, self.factor[0], self.factor[1]))
+				pooled = downsample(data, (1, 1, self.factor[0], self.factor[1]))
+
+		return pooled
 
 
 class ConvLayer():
@@ -352,21 +308,19 @@ class ConvLayer():
 			noKernels: No. feature maps in layer.
 			channels: No. input planes in layer or no. channels in input image.
 			kernelSize: Tuple repr. the size of a kernel.
-			stride: STRIDE MOTHERFUCKER!!! DO YOU SPEAK IT!!! Integer repr. convolutional stride.
+			stride: Integer repr. convolutional stride.
 			outputType: String repr. type of non-linear activation i.e 'relu', 'tanh' or 'sigmoid'.
 			init_w: Std dev of initial weights drawn from a std Normal distro.
 			init_b: Initial value of biases.
 			decode: Boolean indicator whether layer is encoder or decoder.
 		"""
-		self.decode = decode
 		self.o_type = outputType
 		self.init_w, self.init_b = init_w, init_b
 		self.kernels = self.init_w * np.random.randn(noKernels, channels, kernelSize[0], kernelSize[1])
 		self.bias = self.init_b * np.ones((noKernels, 1, 1))
 		self.stride = stride, stride
-		self.d_stride = np.zeros(self.stride)
-		self.d_stride[0, 0] = 1
 		self.v_w, self.dw_ms, self.v_b, self.db_ms = 0, 0, 0, 0
+		self.decode = decode
 
 
 	def bprop(self, dEdo):
@@ -389,19 +343,22 @@ class ConvLayer():
 		else:
 			dEds = dEdo * np.where((self.maps + self.bias) > 0, 1, 0)
 
-		dEds = np.kron(dEds, self.d_stride) #TODO: Investigate stride effect. Esp. with conv.
-		if self.stride[0] > 1:
-			dEds = dEds[:, :, :-(self.stride[0] - 1), :-(self.stride[1] - 1)]
+		if not decode:
+			dEds = strideUpsample(dEds, self.stride)
 
 		self.dEdb = np.sum(np.sum(np.average(dEds, axis=0), axis=1), axis=1).reshape(self.bias.shape)
 
-		#Correlate.
+		# correlate.
 		xs, dEds = np.swapaxes(self.x, 0, 1), np.swapaxes(dEds, 0, 1)
-		self.dEdw = fastConv2d(xs, rot2d90(dEds, 2)) / dEdo.shape[0]
-		self.dEdw = np.swapaxes(self.dEdw, 0, 1)
-		self.dEdw = rot2d90(self.dEdw, 2)
+		if self.decode:
+			self.dEdw = fastConv2d(dEds, rot2d90(xs, 2)) / dEdo.shape[0]
+			self.dEdw = np.swapaxes(self.dEdw, 0, 1)
+		else:	
+			self.dEdw = fastConv2d(xs, rot2d90(dEds, 2)) / dEdo.shape[0]
+			self.dEdw = np.swapaxes(self.dEdw, 0, 1)
+			self.dEdw = rot2d90(self.dEdw, 2)
 
-		#Correlate
+		# correlate
 		dEds, kernels = np.swapaxes(dEds, 0, 1), np.swapaxes(self.kernels, 0, 1)
 		if self.decode:
 			return fastConv2d(dEds, rot2d90(kernels, 2))
@@ -449,10 +406,11 @@ class ConvLayer():
 		-------
 			A N x k x m2 x n2 array of output plains.
 		"""
-		self.x = data
 		if self.decode:
-			self.maps = fastConv2d(self.x, self.kernels, 'full', stride=self.stride)
-		else:	
+			self.x = strideUpsample(data, self.stride)
+			self.maps = fastConv2d(self.x, self.kernels, 'full', self.stride)
+		else:
+			self.x = data	
 			self.maps = fastConv2d(self.x, self.kernels, stride=self.stride)
 
 		if self.o_type == 'tanh':
@@ -480,10 +438,10 @@ class ConvAE():
 
 		if layers != []:
 
-			for ind in xrange(len(layers), -1, -1): # get decoder
-				self.layers.append(self.reflect(layers[ind]))
+			for ind in xrange(len(layers), -1, -1):
+				self.layers = self.layers + self.reflect(layers[ind])
 
-			self.layers = self.layers + deepcopy(layers) # get encoder
+			self.layers = self.layers + deepcopy(layers)
 			self.encodeInd = len(layers)
 
 
@@ -515,7 +473,7 @@ class ConvAE():
 				self.backprop(error)
 				self.update(params, itrs)
 
-				avg_error = averageError(error)
+				avg_error = np.average(errors)
 				print '\r| Epoch: {:5d}  |  Iteration: {:8d}  |  Avg Reconstruction Error: {:.2f}|'.format(epoch, itrs, averageError(error))
 				if epoch != 0 and epoch % 100 == 0:
   					print '---------------------------------------------------------------------------'
@@ -530,7 +488,7 @@ class ConvAE():
 			self.backprop(error)
 			self.update(params, itrs)
 
-			avg_error = averageError(error)
+			avg_error = np.average(errors)
 			print '\r| Epoch: {:5d}  |  Iteration: {:8d}  |  Avg Reconstruction Error: {:.2f} |'.format(epoch, itrs, avg_error)
 			if epoch != 0 and epoch % 100 == 0:
   				print '----------------------------------------------------------------------------'
@@ -551,7 +509,7 @@ class ConvAE():
 
 		plt.ioff()
 
-		reconstruction = self.reconstruct(test)
+		reconstruction = np.average(errors)
 		print '\r Average Reconstruction Error on test images: ', averageError(reconstruction - test)
 		self.displayReconstruction(reconstruction, params)
 
@@ -586,7 +544,7 @@ class ConvAE():
 		-------
 			A no_imgs x img_length x img_width x img_channels array.
 		"""
-		#Transform 4d array into N, no.input_planes, img_length, img_width array
+		# transform into N, no.input_planes, img_length, img_width array
 		data = np.transpose(imgs, (0, 3, 1, 2))
 
 		for i in xrange(len(self.layers) - 1, - 1, -1):
@@ -603,8 +561,8 @@ class ConvAE():
 		-----
 			params: Training parameters.
 		"""
-		eps_w = epsilon_decay(params['eps_w'], params['eps_decay'], params['eps_satr'], i, params['eps_intvl'])
-		eps_b = epsilon_decay(params['eps_b'], params['eps_decay'], params['eps_satr'], i, params['eps_intvl'])
+		eps_w = epsilonDecay(params['eps_w'], params['eps_decay'], params['eps_satr'], i, params['eps_intvl'])
+		eps_b = epsilonDecay(params['eps_b'], params['eps_decay'], params['eps_satr'], i, params['eps_intvl'])
 
 		for layer in self.layers:
 			layer.update(eps_w, eps_b, params['mu'], params['l2'], params['RMSProp'], params['RMSProp_decay'], params['minsq_RMSProp'])
@@ -696,14 +654,14 @@ class ConvAE():
 
 		Returns:
 		--------
-			The corresponding decoding layer.
+			A single element array containing the decoding layer.
 		"""
 
 		if isinstance(layer, ConvLayer):
 			k = layer.kernels.shape
-			return ConvLayer(k[0], k[1], (k[2], k[3]), layer.stride, layer.o_type, layer.init_w, layer.init_b, True)
+			return [ConvLayer(k[0], k[1], (k[2], k[3]), layer.stride, layer.o_type, layer.init_w, layer.init_b, True)]
 		elif isinstance(layer, PoolLayer):
-			return PoolLayer(layer.type, layer.factor, True)
+			return [PoolLayer(layer.type, layer.factor, True)]
 
 
 def testMnist():
@@ -738,7 +696,8 @@ def testMnist():
 		'l2': 0.95,
 		'RMSProp': True,
 		'RMSProp_decay': 0.9,
-		'minsq_RMSProp': 0
+		'minsq_RMSProp': 0,
+		'reconst_images': 5
 	}
 
 	cnn = Cnn(layers)
