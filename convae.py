@@ -196,8 +196,8 @@ def maxpool(data, factor, getPos=True):
 	"""
 	_data = np.asarray(data, dtype='float32')
 	x = tn.ftensor4('x')
-	f = thn.function([], max_pool(x, self.factor), givens={x: shared(_data)})
-	g = thn.function([], max_pool_same(x, self.factor)/x, givens={x: shared(_data + 0.0000000001)})
+	f = thn.function([], max_pool(x, factor, True), givens={x: shared(_data)})
+	g = thn.function([], max_pool_same(x, factor)/x, givens={x: shared(_data + 0.0000000001)})
 
 	pooled = f()
 	if not getPos:
@@ -211,7 +211,7 @@ def maxpool(data, factor, getPos=True):
 
 class PoolLayer():
 	"""
-	A pooling layer.
+	Pooling layer class.
 	"""
 
 	def __init__(self, factor, poolType='avg', decode=False):
@@ -241,10 +241,7 @@ class PoolLayer():
 			A N x k x x m1 x m1 array of errors.
 		"""
 		if self.decode:
-			if self.type == 'max':
-				dE = maxpool(data, self.factor, False)
-			else:
-				dE = downsample(dEdo, (1, 1, self.factor[0], self.factor[1])) * np.sum(self.factor)
+			dE = downsample(dEdo, (1, 1, self.factor[0], self.factor[1])) * np.sum(self.factor)
 		else:
 			if self.type == 'max':
 				dE = np.kron(dEdo, np.ones(self.factor)) * self.positions
@@ -284,7 +281,7 @@ class PoolLayer():
 			if self.type == 'max':
 				pooled = np.kron(data, np.ones(self.factor))
 			else:
-				pooled = np.kron(data, np.ones(self.factor) * (1.0 / np.sum(self.factor)))
+				pooled = np.kron(data, np.ones(self.factor)) * (1.0 / np.sum(self.factor))
 		else:
 			if self.type == 'max':
 				pooled, self.positions = maxpool(data, self.factor)
@@ -296,7 +293,7 @@ class PoolLayer():
 
 class ConvLayer():
 	"""
-	A Convolutional layer.
+	Convolutional layer class.
 	"""
 
 	def __init__(self, noKernels, channels, kernelSize, outputType='relu', stride=1, init_w=0.01, init_b=0, decode=False):
@@ -337,13 +334,14 @@ class ConvLayer():
 			A N x l x m1 x n1 array of errors.
 		"""
 		if self.o_type == 'sigmoid':
-			dEds = dEdo * sigmoid(self.maps + self.bias) * (1 - sigmoid(self.maps + self.bias))
+			theta = sigmoid(self.maps + self.bias)
+			dEds = dEdo * theta * (1 - theta)
 		elif self.o_type == 'tanh':
 			dEds = dEdo * sech2(self.maps + self.bias)
 		else:
 			dEds = dEdo * np.where((self.maps + self.bias) > 0, 1, 0)
 
-		if not decode:
+		if not self.decode:
 			dEds = strideUpsample(dEds, self.stride)
 
 		self.dEdb = np.sum(np.sum(np.average(dEds, axis=0), axis=1), axis=1).reshape(self.bias.shape)
@@ -352,7 +350,6 @@ class ConvLayer():
 		xs, dEds = np.swapaxes(self.x, 0, 1), np.swapaxes(dEds, 0, 1)
 		if self.decode:
 			self.dEdw = fastConv2d(dEds, rot2d90(xs, 2)) / dEdo.shape[0]
-			self.dEdw = np.swapaxes(self.dEdw, 0, 1)
 		else:	
 			self.dEdw = fastConv2d(xs, rot2d90(dEds, 2)) / dEdo.shape[0]
 			self.dEdw = np.swapaxes(self.dEdw, 0, 1)
@@ -361,7 +358,7 @@ class ConvLayer():
 		# correlate
 		dEds, kernels = np.swapaxes(dEds, 0, 1), np.swapaxes(self.kernels, 0, 1)
 		if self.decode:
-			return fastConv2d(dEds, rot2d90(kernels, 2))
+			return fastConv2d(dEds, rot2d90(kernels, 2), stride=self.stride)
 		else:
 			return fastConv2d(dEds, rot2d90(kernels, 2), 'full')
 
@@ -408,7 +405,7 @@ class ConvLayer():
 		"""
 		if self.decode:
 			self.x = strideUpsample(data, self.stride)
-			self.maps = fastConv2d(self.x, self.kernels, 'full', self.stride)
+			self.maps = fastConv2d(self.x, self.kernels, 'full')
 		else:
 			self.x = data	
 			self.maps = fastConv2d(self.x, self.kernels, stride=self.stride)
@@ -438,7 +435,7 @@ class ConvAE():
 
 		if layers != []:
 
-			for ind in xrange(len(layers), -1, -1):
+			for ind in xrange(len(layers) - 1, -1, -1):
 				self.layers = self.layers + self.reflect(layers[ind])
 
 			self.layers = self.layers + deepcopy(layers)
@@ -457,10 +454,9 @@ class ConvAE():
 			params: A dictionary of training parameters.
 		"""
 
-		# check the parameters
 		print "Training network..."
 		plt.ion()
-		N, itrs, errors = train_data.shape[0], 0, []
+		N, itrs, errors = data.shape[0], 0, []
 
 		for epoch in xrange(params['epochs']):
 
@@ -469,52 +465,57 @@ class ConvAE():
 
 			for i, j in zip(start, stop):
  
-				error = self.reconstruct(data[i:j]) - data[i:j] # use l2 norm.
+				error = self.reconstruct(data[i:j]) - data[i:j] # euclidean dist.
 				self.backprop(error)
 				self.update(params, itrs)
 
-				avg_error = np.average(errors)
-				print '\r| Epoch: {:5d}  |  Iteration: {:8d}  |  Avg Reconstruction Error: {:.2f}|'.format(epoch, itrs, averageError(error))
+				avg_error = np.average(error)
+				print '\r| Epoch: {:5d}  |  Iteration: {:8d}  |  Avg Reconstruction Error: {:.2f}|'.format(epoch, itrs, avg_error)
 				if epoch != 0 and epoch % 100 == 0:
   					print '---------------------------------------------------------------------------'
-  				if params['view_kernels']:
-  					self.displayKernels()
 
   				itrs = itrs + 1
   				avg_errors.append(avg_error)
 
   			i = start[-1]
-  			error = self.reconstruct(data[i:]) - data[i:]
+  			recon = self.reconstruct(data[i:]) # to display
+  			error = recon - data[i:]
 			self.backprop(error)
 			self.update(params, itrs)
 
-			avg_error = np.average(errors)
+			avg_error = np.average(error)
 			print '\r| Epoch: {:5d}  |  Iteration: {:8d}  |  Avg Reconstruction Error: {:.2f} |'.format(epoch, itrs, avg_error)
 			if epoch != 0 and epoch % 100 == 0:
   				print '----------------------------------------------------------------------------'
-  			if params['view_kernels']:
-  				self.displayKernels()
 
   			itrs = itrs + 1
   			avg_errors.append(avg_error)
 
+  			# plotting sturvs
   			plt.figure(2)
   			plt.show()
   			errors.append(np.average(avg_errors))
   			plt.xlabel('Epochs')
   			plt.ylabel('Reconstruction Error')
   			plt.plot(range(epoch + 1), errors, '-g')
-  			plt.axis([0, params['epochs'], 0, 255])
+  			plt.axis([0, params['epochs'], -255, 255])
   			plt.draw()
+  			if params['view_kernels']:
+  				self.displayKernels()
+  			if params['view_recon']:
+  				self.display(recon[0 : params['no_images']], 3)
+  				self.display(data[i : i + params['no_images']], 4)
 
 		plt.ioff()
 
-		reconstruction = np.average(errors)
-		print '\r Average Reconstruction Error on test images: ', averageError(reconstruction - test)
-		self.displayReconstruction(reconstruction, params)
+		recon = self.reconstruct(test)
+		print '\rAverage Reconstruction Error on test images: ', np.average(recon - test)
+		self.display(recon[0 : params['no_images']], 5)
+		self.display(test[0 : params['no_images']], 6)
 
+		raw_input("Training complete. Press any key to continue.")
   		print "Saving model..."
-  		#self.saveModel('mnist_cnn_1')
+  		#self.saveModel('convaeModel')
 
   		print "Done."
 
@@ -525,10 +526,10 @@ class ConvAE():
 
 		Args:
 		-----
-			dE: A no_imgs x k_classes array of error gradients.
+			dE: A no_imgs x img_length x img_width x img_channels array.
 		"""
-		error = dE.T
-		for layer in self.layers[0 : self.div_ind]:
+		error = np.transpose(dE, (0, 3, 1, 2))
+		for layer in self.layers:
 			error = layer.bprop(error)
 
 
@@ -544,13 +545,12 @@ class ConvAE():
 		-------
 			A no_imgs x img_length x img_width x img_channels array.
 		"""
-		# transform into N, no.input_planes, img_length, img_width array
 		data = np.transpose(imgs, (0, 3, 1, 2))
 
 		for i in xrange(len(self.layers) - 1, - 1, -1):
 			data = self.layers[i].feedf(data)
 
-		return np.transpose(data, (0, 1, 2, 3))
+		return np.transpose(data, (0, 2, 3, 1))
 
 
 	def update(self, params, i):
@@ -607,41 +607,44 @@ class ConvAE():
 
 	def displayKernels(self):
 		"""
-		Displays the kernels in the first convolutional layer.
+		Displays the kernels in the first layer.
 		"""
-		plt.figure(1)
 
 		kernels = self.layers[len(self.layers) - 1].kernels
-		k, l, m, n = kernels.shape
-		if l == 2 or l > 4:
+		
+		if kernels.shape[1] == 2 or kernels.shape[1] > 4:
 			print "displayKernels() Error: Invalid number of channels."
 			pass
 
-		x = np.ceil(np.sqrt(k))
-		y = np.ceil(k/x)
-
-		for i in xrange(k):
-			plt.subplot(x, y, i)
-			kernel = np.transpose(kernels[i], (2, 1, 0))
-			if kernel.shape[2] == 1:
-				plt.imshow(kernel[:, :, 0], 'gray')
-			else:
-				plt.imshow(kernel)
-			plt.axis('off')
-
-		plt.draw()
+		kernels = np.transpose(kernels, (0, 3, 2, 1))
+		self.display(kernels, 1)
 
 
-	def displayReconstructions(self, imgs, params):
+	def display(self, imgs, f):
 		"""
-		Sample and display some of the reconstructed images.
+		Display the given images.
 
 		Args:
 		-----
-			imgs: A no_imgs x img_length x img_width x img_channels array.
-			params: Model parameters. 
+			imgs: Images to display.
+			f: Figure no. on which to display images.
 		"""
-		pass
+		N, m, n, c = imgs.shape
+
+		x = np.ceil(np.sqrt(N))
+		y = np.ceil(N / x)
+
+		plt.figure(f)
+		for i in xrange(N):
+			plt.subplot(x, y, i)
+			img = imgs[i]
+			if img.shape[2] == 1:
+				plt.imshow(img[:, :, 0], 'gray')
+			else:
+				plt.imshow(img)
+			plt.axis('off')
+
+		plt.draw()
 
 
 	def reflect(self, layer):
@@ -659,9 +662,9 @@ class ConvAE():
 
 		if isinstance(layer, ConvLayer):
 			k = layer.kernels.shape
-			return [ConvLayer(k[0], k[1], (k[2], k[3]), layer.stride, layer.o_type, layer.init_w, layer.init_b, True)]
+			return [ConvLayer(k[1], k[0], (k[2], k[3]), layer.o_type, layer.stride[0], layer.init_w, layer.init_b, True)]
 		elif isinstance(layer, PoolLayer):
-			return [PoolLayer(layer.type, layer.factor, True)]
+			return [PoolLayer(layer.factor, layer.type, True)]
 
 
 def testMnist():
@@ -670,23 +673,26 @@ def testMnist():
 	"""
 
 	print "Loading MNIST images..."
-	data = np.load('data/cnnMnist.npz')
+	data = np.load('data/mnist.npz')
 	train_data = data['train_data'][0:1000].reshape(1000, 28, 28, 1)
 	valid_data = data['valid_data'][0:1000].reshape(1000, 28, 28, 1)
-	train_data = np.concatenate(train_data, valid_data)
+	train_data = np.concatenate((train_data, valid_data))
 	test_data = data['test_data'].reshape(10000, 28, 28, 1)
 
 	print "Creating network..."
 
 	layers = [
-				PoolLayer((2, 2)),
-				ConvLayer(6, 1, (6,6))
+				#ConvLayer(16, 6, (2, 2), stride=2),
+				PoolLayer((2, 2), 'max'),
+				ConvLayer(6, 1, (7, 7), stride=3)
 			]
 
 	params = {
-		'epochs': 20,
+		'epochs': 30,
 		'batch_size': 500,
-		'view_kernels': True,
+		'view_kernels': False,
+		'view_recon': True,
+		'no_images': 5,
 		'eps_w': 0.0007,
 		'eps_b': 0.0007,
 		'eps_decay': 9,
@@ -697,11 +703,10 @@ def testMnist():
 		'RMSProp': True,
 		'RMSProp_decay': 0.9,
 		'minsq_RMSProp': 0,
-		'reconst_images': 5
 	}
 
-	cnn = Cnn(layers)
-	cnn.train(train_data, test_data, params)
+	ae = ConvAE(layers)
+	ae.train(train_data, test_data, params)
 
 
 def testCifar10():
