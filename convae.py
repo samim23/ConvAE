@@ -515,7 +515,7 @@ class ConvAE():
 
 		raw_input("Training complete. Press any key to continue.")
   		print "Saving model..."
-  		#self.saveModel('convaeModel')
+  		self.saveModel('convaeModel')
 
   		print "Done."
 
@@ -669,20 +669,19 @@ class ConvAE():
 
 def testMnist():
 	"""
-	Test autoencoder using the MNIST dataset.
+	Test autoencoder on MNIST dataset.
 	"""
 
 	print "Loading MNIST images..."
 	data = np.load('data/mnist.npz')
-	train_data = data['train_data'][0:1000].reshape(1000, 28, 28, 1)
-	valid_data = data['valid_data'][0:1000].reshape(1000, 28, 28, 1)
+	train_data = data['train_data'][0:45000].reshape(45000, 28, 28, 1)
+	valid_data = data['valid_data'][0:5000].reshape(5000, 28, 28, 1)
 	train_data = np.concatenate((train_data, valid_data))
 	test_data = data['test_data'].reshape(10000, 28, 28, 1)
 
 	print "Creating network..."
 
 	layers = [
-				#ConvLayer(16, 6, (2, 2), stride=2),
 				PoolLayer((2, 2), 'max'),
 				ConvLayer(6, 1, (7, 7), stride=3)
 			]
@@ -709,87 +708,47 @@ def testMnist():
 	ae.train(train_data, test_data, params)
 
 
-def testCifar10():
+def testTorontoFaces():
 	"""
-	Test the cnn using the CIFAR-10 dataset.
+	Test autoencoder on Toronto Faces dataset.
 	"""
 
-	print "Loading CIFAR-10 images..."
-	data = np.load('data/cifar10.npz')
-	train_data = data['train_data'][0:49500]
-	valid_data = data['train_data'][49500:50000]
-	test_data = data['test_data']
-	train_label = data['train_label'][0:49500]
-	valid_label = data['train_label'][49500:50000]
-	test_label = data['test_label']
+	print "Loading Toronto Facial images..."
+	data = np.load('data/faces.npz')
+	train_data = np.transpose(data['train_data'], (2, 0, 1)).reshape(2925, 32, 32, 1)
+	test_data = np.transpose(data['test_data'], (2, 0, 1)).reshape(418, 32, 32, 1)
 
-	i = random.randint(0, 49500)
-	pic = train_data[i]
+	print "Creating network..."
 
-	print "Centering images..."
-	train_data = centerDataset(train_data)
-	valid_data = centerDataset(valid_data)
-	test_data = centerDataset(test_data)
-
-	f, (a, b) = plt.subplots(1, 2)
-	a.imshow(pic)
-	a.axis('off')
-	b.imshow(train_data[i])
-	b.axis('off')
-	plt.show()
-	f.get_tight_layout()
-
-	print "Displaying covariance matrix across channels..."
-	displayCov(train_data[0:1000])
-
-	print "Initializing network..."
-	# Ensure size of output maps in preceeding layer is equals to the size of input maps in next layer.
-	layers = {
-		"fc":[
-				PerceptronLayer(10, 64, 0.9, 'softmax'),
-				PerceptronLayer(64, 64, 0.8, 'tanh')
-			],
-		"conv":[
-				ConvLayer(64, 32, (5,5)),
-				PoolLayer((2, 2), 'avg'),
-				ConvLayer(32, 32, (5,5)),
+	layers = [
 				PoolLayer((2, 2), 'max'),
-				ConvLayer(32, 3, (5,5), init_w=0.0001)
+				ConvLayer(6, 1, (3, 3))
 			]
-	}
 
 	params = {
-		'epochs': 30,
-		'batch_size': 128,
-		'view_kernels': True,
-
-		'fc':{
-			'eps_w': 0.001,
-			'eps_b': 0.002,
-			'eps_decay': 9,
-			'eps_intvl': 0,
-			'eps_satr': 'inf',
-			'mu': 0.6,
-			'l2': 0.03
-		},
-
-		'conv': {
-			'eps_w': 0.001,
-			'eps_b': 0.002,
-			'eps_decay': 9,
-			'eps_intvl': 0,
-			'eps_satr': 'inf',
-			'mu': 0.6,
-			'l2': 0.004
-		}
+		'epochs': 50,
+		'batch_size': 500,
+		'view_kernels': False,
+		'view_recon': True,
+		'no_images': 12,
+		'eps_w': 0.005,
+		'eps_b': 0.005,
+		'eps_decay': 9,
+		'eps_intvl': 10,
+		'eps_satr': 'inf',
+		'mu': 0.7,
+		'l2': 0.95,
+		'RMSProp': True,
+		'RMSProp_decay': 0.9,
+		'minsq_RMSProp': 0.01,
 	}
 
-	#cnn = Cnn(layers)
-	#cnn.train(train_data, train_label, valid_data, valid_label, test_data, test_label, params)
+	ae = ConvAE(layers)
+	ae.train(train_data, test_data, params)
 
 
 
 if __name__ == '__main__':
 
-	testMnist()
-	#testCifar10()
+	#testMnist()
+	testTorontoFaces()
