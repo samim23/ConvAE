@@ -17,7 +17,7 @@ You need the following dependencies to run the network:
 Initializing the network
 ----------------------
 
-To initialize the network, pass a list containing each of the encoding layers (Convolutional and Pooling) arranged heirarchially - topmost layer at the beginning of list.
+To initialize the network, pass a list containing each of the encoding layers (Convolutional and Pooling) arranged hierarchically - topmost layer at the beginning of list.
 
 	layers = [
 				PoolLayer((2, 2), 'max'),
