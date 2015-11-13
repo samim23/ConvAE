@@ -81,6 +81,8 @@ An example of training parameters is as follows
 Below shows both the reconstructed and actual images gotten from training the network on the Toronto Faces Dataset using the above parameters
 ![alt text](images/faces.png?raw=true "Faces images")
 
+Currently to perform greedy-layer wise training, you'll have to manually train each of the layers seperately - using the output of the trained layers below as input.
+
 
 Loading and Saving models
 -------------------------
@@ -90,7 +92,7 @@ You can save and load a trained model by calling `saveModel(filename)` and `load
 
 Todo
 ----
-1. Support greedy-layer wise training. Currently done manually by user. 
+1. Support greedy-layer wise training. 
 2. Investigate better error metric.
 3. Implement the addition of noise during training.
 
