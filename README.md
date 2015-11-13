@@ -81,10 +81,10 @@ An example of training parameters is as follows
 Below is the result of training the network on the Toronto Faces Dataset using the above parameters
 
 Reconstructed images:
-![alt tag](https://raw.github.com/ev0/ConvAE/master/images/faces1.png)
+![alt text](images/faces1.png?raw=true "Reconstructed images")
 
 Actual images:
-![alt tag](https://raw.github.com/ev0/ConvAE/master/images/faces2.png)
+![alt text](/images/faces2.png?raw=true "Actual images.")
 
 
 Loading and Saving models
