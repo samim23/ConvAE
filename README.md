@@ -1,13 +1,13 @@
 ConvAE
 ======
 
-A convolutional autoencoder for those times when you need to pretrain.
+A convolutional autoencoder...for those times when you need pre-training.
 
 
 Dependencies
 ------------
 
-You need the following dependencies if you choose to run the network:
+You need the following dependencies to run the network:
 
 * [Numpy] (http://www.numpy.org)
 * [Skimage] (http://scikit-image.org)
@@ -30,7 +30,7 @@ The network will automatically create the corresponding decoding layers.
 Training
 --------
 
-Training the network is done by calling
+Pre-training is done by calling
 
 	train(data, test, params)
 
@@ -58,7 +58,7 @@ Here is a quick description of the training parameters:
 * *RMSProp_decay*: Float repr. decay constant for RMS prop.
 * *minsq_RMSProp*: Floar repr. constant for RMS prop denominator.
 
-An example of training parameters is as follows
+An example of parameters is as follows
 	
 	{
 		'epochs': 50,
@@ -78,10 +78,10 @@ An example of training parameters is as follows
 		'minsq_RMSProp': 0.01,
 	}
 
-Below shows both the reconstructed and actual images gotten from training the network on the Toronto Faces Dataset using the above parameters
+Below shows both the reconstructed and actual images gotten on the Toronto Faces Dataset using the above parameters
 ![alt text](images/faces.png?raw=true "Faces images")
 
-Currently to perform greedy-layer wise training, you'll have to manually train each of the layers seperately - using the output of the trained layers below as input.
+Currently to perform greedy-layer wise training, you'll have to manually train each of the layers separately - using the output of the trained layers below as input.
 
 
 Loading and Saving models
@@ -92,7 +92,7 @@ You can save and load a trained model by calling `saveModel(filename)` and `load
 
 Todo
 ----
-1. Support greedy-layer wise training. 
+1. Support greedy-layer wise pre-training. 
 2. Investigate better error metric.
 3. Implement the addition of noise during training.
 
