@@ -78,13 +78,8 @@ An example of training parameters is as follows
 		'minsq_RMSProp': 0.01,
 	}
 
-Below is the result of training the network on the Toronto Faces Dataset using the above parameters
-
-Reconstructed images:
-![alt text](images/faces1.png?raw=true "Reconstructed images")
-
-Actual images:
-![alt text](/images/faces2.png?raw=true "Actual images.")
+Below shows both the reconstructed and actual images gotten from training the network on the Toronto Faces Dataset using the above parameters
+![alt text](images/faces.png?raw=true "Faces images")
 
 
 Loading and Saving models
@@ -97,3 +92,5 @@ Todo
 ----
 1. Support greedy-layer wise training. Currently done manually by user. 
 2. Investigate better error metric.
+3. Implement the addition of noise during training.
+
