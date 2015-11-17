@@ -306,7 +306,7 @@ class ConvLayer():
 			channels: No. input planes in layer or no. channels in input image.
 			kernelSize: Tuple repr. the size of a kernel.
 			stride: Integer repr. convolutional stride.
-			outputType: String repr. type of non-linear activation i.e 'relu', 'tanh' or 'sigmoid'.
+			outputType: String repr. type of non-linear activation i.e 'relu', 'tanh', 'sigmoid' or 'linear'.
 			init_w: Std dev of initial weights drawn from a std Normal distro.
 			init_b: Initial value of biases.
 			decode: Boolean indicator whether layer is encoder or decoder.
@@ -338,8 +338,10 @@ class ConvLayer():
 			dEds = dEdo * theta * (1 - theta)
 		elif self.o_type == 'tanh':
 			dEds = dEdo * sech2(self.maps + self.bias)
-		else:
+		elif self.o_type == 'relu':
 			dEds = dEdo * np.where((self.maps + self.bias) > 0, 1, 0)
+		else:
+			dEds = dEdo
 
 		if not self.decode:
 			dEds = strideUpsample(dEds, self.stride)
@@ -414,6 +416,8 @@ class ConvLayer():
 			return np.tanh(self.maps + self.bias)
 		elif self.o_type == 'sigmoid':
 			return sigmoid(self.maps + self.bias)
+		elif self.o_type == 'linear':
+			return self.maps + self.bias
 
 		return relu(self.maps + self.bias)
 
@@ -674,10 +678,10 @@ def testMnist():
 
 	print "Loading MNIST images..."
 	data = np.load('data/mnist.npz')
-	train_data = data['train_data'][0:45000].reshape(45000, 28, 28, 1)
-	valid_data = data['valid_data'][0:5000].reshape(5000, 28, 28, 1)
+	train_data = data['train_data'][0:1000].reshape(1000, 28, 28, 1)
+	valid_data = data['valid_data'][0:1000].reshape(1000, 28, 28, 1)
 	train_data = np.concatenate((train_data, valid_data))
-	test_data = data['test_data'].reshape(10000, 28, 28, 1)
+	test_data = data['test_data'][0:1000].reshape(1000, 28, 28, 1)
 
 	print "Creating network..."
 
@@ -687,7 +691,7 @@ def testMnist():
 			]
 
 	params = {
-		'epochs': 30,
+		'epochs': 20,
 		'batch_size': 500,
 		'view_kernels': False,
 		'view_recon': True,
@@ -721,8 +725,8 @@ def testTorontoFaces():
 	print "Creating network..."
 
 	layers = [
-				PoolLayer((2, 2), 'max'),
-				ConvLayer(6, 1, (3, 3))
+				#PoolLayer((2, 2), 'max'),
+				ConvLayer(6, 1, (3, 3), outputType='linear')
 			]
 
 	params = {
