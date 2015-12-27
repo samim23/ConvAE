@@ -461,6 +461,7 @@ class ConvAE():
 		print "Training network..."
 		plt.ion()
 		N, itrs, errors = data.shape[0], 0, []
+		n = random.randint(0, N - (params['no_images'] + 1))
 
 		for epoch in xrange(params['epochs']):
 
@@ -514,8 +515,8 @@ class ConvAE():
 
 		recon = self.reconstruct(test)
 		print '\rAverage Reconstruction Error on test images: ', np.average(recon - test)
-		self.display(recon[0 : params['no_images']], 5)
-		self.display(test[0 : params['no_images']], 6)
+		self.display(recon[n : n + params['no_images']], 5)
+		self.display(test[n : n + params['no_images']], 6)
 
 		raw_input("Training complete. Press any key to continue.")
   		print "Saving model..."
@@ -751,8 +752,87 @@ def testTorontoFaces():
 	ae.train(train_data, test_data, params)
 
 
+def testTorontoFaces():
+	"""
+	Test autoencoder on Toronto Faces dataset.
+	"""
+
+	print "Loading Toronto Facial images..."
+	data = np.load('data/faces.npz')
+	train_data = np.transpose(data['train_data'], (2, 0, 1)).reshape(2925, 32, 32, 1)
+	test_data = np.transpose(data['test_data'], (2, 0, 1)).reshape(418, 32, 32, 1)
+
+	print "Creating network..."
+
+	layers = [
+				#PoolLayer((2, 2), 'max'),
+				ConvLayer(6, 1, (3, 3), outputType='linear')
+			]
+
+	params = {
+		'epochs': 50,
+		'batch_size': 500,
+		'view_kernels': False,
+		'view_recon': True,
+		'no_images': 12,
+		'eps_w': 0.005,
+		'eps_b': 0.005,
+		'eps_decay': 9,
+		'eps_intvl': 10,
+		'eps_satr': 'inf',
+		'mu': 0.7,
+		'l2': 0.95,
+		'RMSProp': True,
+		'RMSProp_decay': 0.9,
+		'minsq_RMSProp': 0.01,
+	}
+
+	ae = ConvAE(layers)
+	ae.train(train_data, test_data, params)
+
+
+def testPong():
+	"""
+	Test autoencoder on Pong dataset.
+	"""
+
+	print "Loading pong images..."
+	f = open('data/pongs', 'r')
+	data = cpkl.load(f)
+	train_data, test_data = data['train'], data['test']
+	f.close()
+
+	print "Creating network..."
+
+	layers = [
+				ConvLayer(8, 4, (5, 5), stride=3)
+			]
+
+	params = {
+		'epochs': 50,
+		'batch_size': 500,
+		'view_kernels': False,
+		'view_recon': True,
+		'no_images': 12,
+		'eps_w': 0.005,
+		'eps_b': 0.005,
+		'eps_decay': 9,
+		'eps_intvl': 10,
+		'eps_satr': 'inf',
+		'mu': 0.7,
+		'l2': 0.95,
+		'RMSProp': True,
+		'RMSProp_decay': 0.9,
+		'minsq_RMSProp': 0.01,
+	}
+
+	ae = ConvAE(layers)
+	ae.train(train_data, test_data, params)
+
+
 
 if __name__ == '__main__':
 
 	#testMnist()
-	testTorontoFaces()
+	#testTorontoFaces()
+	testPong()
