@@ -707,66 +707,28 @@ def testMnist():
 				ConvLayer(6, 1, (7, 7), stride=3)
 			]
 
-	params = {
-		'epochs': 20,
-		'batch_size': 500,
-		'view_kernels': False,
-		'view_recon': True,
-		'no_images': 5,
-		'eps_w': 0.0007,
-		'eps_b': 0.0007,
-		'eps_decay': 9,
-		'eps_intvl': 30,
-		'eps_satr': 'inf',
-		'mu': 0.7,
-		'l2': 0.95,
-		'RMSProp': True,
-		'RMSProp_decay': 0.9,
-		'minsq_RMSProp': 0,
-	}
-
-	ae = ConvAE(layers)
-	ae.train(train_data, test_data, params)
-
-
-def testTorontoFaces():
-	"""
-	Test autoencoder on Toronto Faces dataset.
-	"""
-
-	print "Loading Toronto Facial images..."
-	data = np.load('data/faces.npz')
-	train_data = np.transpose(data['train_data'], (2, 0, 1)).reshape(2925, 32, 32, 1)
-	test_data = np.transpose(data['test_data'], (2, 0, 1)).reshape(418, 32, 32, 1)
-
-	print "Creating network..."
-
-	layers = [
-				ConvLayer(6, 1, (3, 3), outputType='linear')
-			]
-
-	hyperparams = [
+	params = [
 		{
-			'epochs': 50,
+			'epochs': 20,
 			'batch_size': 500,
 			'view_kernels': False,
 			'view_recon': True,
-			'no_images': 12,
-			'eps_w': 0.005,
-			'eps_b': 0.005,
+			'no_images': 5,
+			'eps_w': 0.0007,
+			'eps_b': 0.0007,
 			'eps_decay': 9,
-			'eps_intvl': 10,
+			'eps_intvl': 30,
 			'eps_satr': 'inf',
 			'mu': 0.7,
 			'l2': 0.95,
 			'RMSProp': True,
 			'RMSProp_decay': 0.9,
-			'minsq_RMSProp': 0.01,
+			'minsq_RMSProp': 0,
 		}
 	]
 
-	ae = ConvAE()
-	ae.train(train_data, test_data, layers, hyperparams)
+	ae = ConvAE(layers)
+	ae.train(train_data, test_data, params)
 
 
 def testTorontoFaces():
