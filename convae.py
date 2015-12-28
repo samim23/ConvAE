@@ -457,17 +457,16 @@ class ConvAE():
 	def train(self, data, test, layers, hyperparams):
 		"""
 		Train autoencoder to learn a compressed feature representation of data using
-		the given params.
+		the given hyperparams.
 
 		Args:
 		-----
 			data : A no_imgs x img_length x img_width x no_channels array of images.
 			test : A no_imgs x img_length x img_width x no_channels array of images.
-			params: A list of training parameters for each layer.
+			hyperparams: A list of training hyperparameters for each layer.
 		"""
 
 		params = None
-
 		if len(hyperparams) == 1:
 			params == hyperparams
 		else: 
@@ -476,16 +475,12 @@ class ConvAE():
 
 		print "Training network..."
 		plt.ion()
-
+		N, n = data.shape[0], -1
 		decoder, encoder = self.layers[:self.idx], self.layers[self.idx:]
 
 		for i in xrange(len(layers) - 1, -1, -1):
 
 			print "Training layer " + str(i) + "..."
-
-			N, itrs, errors = train_data.shape[0], 0, []
-			n = random.randint(0, N - (params['no_images'] + 1))
-
 			self.layers, self.idx = self.reflect(layers[i]) + [layers[i]], 1
 
 			if isinstance(layers[i], PoolLayer):
@@ -496,6 +491,9 @@ class ConvAE():
 				params = hyperparams[i]
 
 			train_data, test_data = self.feedf(encoder, data), self.feedf(encoder, test)
+			itrs, errors = 0, []
+			if n == -1:
+				n = random.randint(0, N - (params['no_images'] + 1))
 
 			for epoch in xrange(params['epochs']):
 
@@ -508,11 +506,10 @@ class ConvAE():
 					self.backprop(error)
 					self.update(params, itrs)
 
-					avg_error = np.average(error)
+					avg_error = np.average(np.absolute(error)) #TODO: Investigate why error is low.
 					print '\r| Epoch: {:5d}  |  Iteration: {:8d}  |  Avg Reconstruction Error: {:.2f}|'.format(epoch, itrs, avg_error)
 					if epoch != 0 and epoch % 100 == 0:
   						print '---------------------------------------------------------------------------'
-
   					itrs = itrs + 1
   					avg_errors.append(avg_error)
 
@@ -521,11 +518,10 @@ class ConvAE():
 				self.backprop(error)
 				self.update(params, itrs)
 
-				avg_error = np.average(error)
+				avg_error = np.average(np.absolute(error))
 				print '\r| Epoch: {:5d}  |  Iteration: {:8d}  |  Avg Reconstruction Error: {:.2f} |'.format(epoch, itrs, avg_error)
 				if epoch != 0 and epoch % 100 == 0:
   					print '----------------------------------------------------------------------------'
-
   				itrs = itrs + 1
   				avg_errors.append(avg_error)
 
@@ -536,7 +532,7 @@ class ConvAE():
   				plt.xlabel('Epochs')
   				plt.ylabel('Reconstruction Error')
   				plt.plot(range(epoch + 1), errors, '-g')
-  				plt.axis([0, params['epochs'], -255, 255])
+  				plt.axis([0, params['epochs'], 0, 255])
   				plt.draw()
   				if params['view_kernels']:
   					self.displayKernels()
@@ -545,21 +541,17 @@ class ConvAE():
   					self.display(recon[n : n + params['no_images']], 3)
   					self.display(data[n : n + params['no_images']], 4)
 
-		
-
 			recon = self.feedf(self.layers, test_data)
 			print '\rAverage Reconstruction Error on test images: ', np.average(recon - test_data)
-
-			ans = raw_input("Done. Save layer and continue ? (y/n)")
+			ans = raw_input("Done. Save layer and continue ? (y/n) ")
 			if ans == "n":
 				break
 
-			decoder, encoder = decoder + self.layers[0], encoder + self.layers[1]
+			decoder, encoder = decoder + [self.layers[0]], encoder + [self.layers[1]]
 
 		plt.ioff()
 
 		self.layers, self.idx = decoder + encoder, len(encoder) 
-
 		raw_input("Training complete. Press any key to continue.")
   		print "Saving model..."
   		self.saveModel('convaeModel')
@@ -750,114 +742,11 @@ def testTorontoFaces():
 	print "Creating network..."
 
 	layers = [
-				#PoolLayer((2, 2), 'max'),
 				ConvLayer(6, 1, (3, 3), outputType='linear')
 			]
 
-	params = {
-		'epochs': 50,
-		'batch_size': 500,
-		'view_kernels': False,
-		'view_recon': True,
-		'no_images': 12,
-		'eps_w': 0.005,
-		'eps_b': 0.005,
-		'eps_decay': 9,
-		'eps_intvl': 10,
-		'eps_satr': 'inf',
-		'mu': 0.7,
-		'l2': 0.95,
-		'RMSProp': True,
-		'RMSProp_decay': 0.9,
-		'minsq_RMSProp': 0.01,
-	}
-
-	ae = ConvAE(layers)
-	ae.train(train_data, test_data, params)
-
-
-def testTorontoFaces():
-	"""
-	Test autoencoder on Toronto Faces dataset.
-	"""
-
-	print "Loading Toronto Facial images..."
-	data = np.load('data/faces.npz')
-	train_data = np.transpose(data['train_data'], (2, 0, 1)).reshape(2925, 32, 32, 1)
-	test_data = np.transpose(data['test_data'], (2, 0, 1)).reshape(418, 32, 32, 1)
-
-	print "Creating network..."
-
-	layers = [
-				#PoolLayer((2, 2), 'max'),
-				ConvLayer(6, 1, (3, 3), outputType='linear')
-			]
-
-	params = {
-		'epochs': 50,
-		'batch_size': 500,
-		'view_kernels': False,
-		'view_recon': True,
-		'no_images': 12,
-		'eps_w': 0.005,
-		'eps_b': 0.005,
-		'eps_decay': 9,
-		'eps_intvl': 10,
-		'eps_satr': 'inf',
-		'mu': 0.7,
-		'l2': 0.95,
-		'RMSProp': True,
-		'RMSProp_decay': 0.9,
-		'minsq_RMSProp': 0.01,
-	}
-
-	ae = ConvAE(layers)
-	print "Len layers: ", len(ae.layers)
-	ae.train(train_data, test_data, params)
-
-
-def testPong():
-	"""
-	Test autoencoder on Pong dataset.
-	"""
-
-	print "Loading pong images..."
-	f = open('data/pongs', 'r')
-	data = cpkl.load(f)
-	train_data, test_data = data['train'], data['test']
-	f.close()
-
-	print "Creating network..."
-
-	layers = [
-				ConvLayer(16, 8, (4, 4), stride=2),
-				ConvLayer(8, 4, (5, 5), stride=3)
-			]
-
-	params = [
-	
+	hyperparams = [
 		{
-			'epochs': 50,
-			'batch_size': 500,
-			'view_kernels': False,
-			'view_recon': True,
-			'no_images': 12,
-			'eps_w': 0.005,
-			'eps_b': 0.005,
-			'eps_decay': 9,
-			'eps_intvl': 10,
-			'eps_satr': 'inf',
-			'mu': 0.7,
-			'l2': 0.95,
-			'RMSProp': True,
-			'RMSProp_decay': 0.9,
-			'minsq_RMSProp': 0.01,
-		},
-
-		{
-			'train': True,
-			'import': False,
-			'model_filename': '',
 			'epochs': 50,
 			'batch_size': 500,
 			'view_kernels': False,
@@ -876,13 +765,114 @@ def testPong():
 		}
 	]
 
-	ae = ConvAE(layers)
-	ae.train(train_data, test_data, params)
+	ae = ConvAE()
+	ae.train(train_data, test_data, layers, hyperparams)
+
+
+def testTorontoFaces():
+	"""
+	Test autoencoder on Toronto Faces dataset.
+	"""
+
+	print "Loading Toronto Facial images..."
+	data = np.load('data/faces.npz')
+	train_data = np.transpose(data['train_data'], (2, 0, 1)).reshape(2925, 32, 32, 1)
+	test_data = np.transpose(data['test_data'], (2, 0, 1)).reshape(418, 32, 32, 1)
+
+	print "Creating network..."
+
+	layers = [
+				ConvLayer(6, 1, (3, 3), outputType='linear') #do PCA
+			]
+
+	hyperparams = [
+		{
+			'epochs': 50,
+			'batch_size': 500,
+			'view_kernels': False,
+			'view_recon': True,
+			'no_images': 12,
+			'eps_w': 0.005,
+			'eps_b': 0.005,
+			'eps_decay': 9,
+			'eps_intvl': 10,
+			'eps_satr': 'inf',
+			'mu': 0.7,
+			'l2': 0.95,
+			'RMSProp': True,
+			'RMSProp_decay': 0.9,
+			'minsq_RMSProp': 0.01,
+		}
+	]
+
+	ae = ConvAE()
+	ae.train(train_data, test_data, layers, hyperparams)
+
+
+def testPongMoves():
+	"""
+	Test autoencoder on recorded atari pong moves.
+	"""
+
+	print "Loading pong images..."
+	f = open('data/pongs', 'r')
+	data = cpkl.load(f)
+	train_data, test_data = data['train'], data['test']
+	f.close()
+
+	print "Creating network..."
+
+	layers = [
+				ConvLayer(16, 8, (4, 4), stride=2),
+				ConvLayer(8, 4, (5, 5), stride=3)
+			]
+
+	hyperparams = [
+	
+		{
+			'epochs': 10,
+			'batch_size': 500,
+			'view_kernels': False,
+			'view_recon': True,
+			'no_images': 12,
+			'eps_w': 0.005,
+			'eps_b': 0.005,
+			'eps_decay': 9,
+			'eps_intvl': 10,
+			'eps_satr': 'inf',
+			'mu': 0.7,
+			'l2': 0.95,
+			'RMSProp': True,
+			'RMSProp_decay': 0.9,
+			'minsq_RMSProp': 0.01,
+		},
+
+		{
+			'epochs': 10,
+			'batch_size': 500,
+			'view_kernels': False,
+			'view_recon': True,
+			'no_images': 12,
+			'eps_w': 0.005,
+			'eps_b': 0.005,
+			'eps_decay': 9,
+			'eps_intvl': 10,
+			'eps_satr': 'inf',
+			'mu': 0.7,
+			'l2': 0.95,
+			'RMSProp': True,
+			'RMSProp_decay': 0.9,
+			'minsq_RMSProp': 0.01,
+		}
+	]
+
+	ae = ConvAE()
+	ae.train(train_data, test_data, layers, hyperparams)
 
 
 
 if __name__ == '__main__':
 
 	#testMnist()
-	testTorontoFaces()
-	#testPong()
+	#testTorontoFaces()
+	testPongMoves()
