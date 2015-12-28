@@ -208,6 +208,14 @@ def maxpool(data, factor, getPos=True):
 	return pooled, positions
 
 
+def addNoise(data, p=0.5):
+	"""
+	Add noise to the input by randomly setting bits to 0.
+	"""
+	return np.random.binomial(1, p, data.shape) * data
+
+
+
 class PoolLayer():
 	"""
 	Pooling layer class.
@@ -502,19 +510,21 @@ class ConvAE():
 
 				for i, j in zip(start, stop):
  
-					error = self.feedf(self.layers, train_data[i:j]) - train_data[i:j] # euclidean dist.
+ 					corrupt_train = addNoise(train_data[i:j], 0.2)
+					error = self.feedf(self.layers, corrupt_train) - train_data[i:j] # euclidean dist.
 					self.backprop(error)
 					self.update(params, itrs)
 
 					avg_error = np.average(np.absolute(error)) #TODO: Investigate why error is low.
-					print '\r| Epoch: {:5d}  |  Iteration: {:8d}  |  Avg Reconstruction Error: {:.2f}|'.format(epoch, itrs, avg_error)
+					print '\r| Epoch: {:5d}  |  Iteration: {:8d}  |  Avg Reconstruction Error: {:.2f} |'.format(epoch, itrs, avg_error)
 					if epoch != 0 and epoch % 100 == 0:
   						print '---------------------------------------------------------------------------'
   					itrs = itrs + 1
   					avg_errors.append(avg_error)
 
   				i = start[-1]
-  				error = self.feedf(self.layers, train_data[i:]) - train_data[i:]
+  				corrupt_train = addNoise(train_data[i:], 0.2)
+  				error = self.feedf(self.layers, corrupt_train) - train_data[i:]
 				self.backprop(error)
 				self.update(params, itrs)
 
@@ -537,9 +547,10 @@ class ConvAE():
   				if params['view_kernels']:
   					self.displayKernels()
   				if params['view_recon']:
-  					recon = self.feedf(decoder + self.layers + encoder, data) #viewing pleasure
-  					self.display(recon[n : n + params['no_images']], 3)
-  					self.display(data[n : n + params['no_images']], 4)
+  					blah = data[n : n + params['no_images']]
+  					recon = self.feedf(decoder + self.layers + encoder, blah) #viewing pleasure
+  					self.display(recon, 3)
+  					self.display(blah, 4)
 
 			recon = self.feedf(self.layers, test_data)
 			print '\rAverage Reconstruction Error on test images: ', np.average(recon - test_data)
@@ -548,15 +559,12 @@ class ConvAE():
 				break
 
 			decoder, encoder = decoder + [self.layers[0]], encoder + [self.layers[1]]
+			self.layers, self.idx = decoder + encoder, len(encoder) 
+			print "Saving model..."
+  			self.saveModel('convaeModel')
 
 		plt.ioff()
-
-		self.layers, self.idx = decoder + encoder, len(encoder) 
-		raw_input("Training complete. Press any key to continue.")
-  		print "Saving model..."
-  		self.saveModel('convaeModel')
-
-  		print "Done."
+  		print "Training complete."
 
 
 	def backprop(self, dE):
@@ -639,6 +647,7 @@ class ConvAE():
 		y = np.ceil(N / x)
 
 		plt.figure(f)
+		plt.clf()
 		for i in xrange(N):
 			plt.subplot(x, y, i)
 			img = imgs[i]
@@ -686,6 +695,7 @@ class ConvAE():
 			self.idx = model["idx"]
 
 		f.close()
+
 
 
 def testMnist():
@@ -785,46 +795,26 @@ def testPongMoves():
 	print "Creating network..."
 
 	layers = [
-				ConvLayer(16, 8, (4, 4), stride=2),
 				ConvLayer(8, 4, (5, 5), stride=3)
 			]
 
 	hyperparams = [
-	
 		{
-			'epochs': 10,
-			'batch_size': 500,
+			'epochs': 1000,
+			'batch_size': 132,
 			'view_kernels': False,
 			'view_recon': True,
 			'no_images': 12,
-			'eps_w': 0.005,
-			'eps_b': 0.005,
+			'eps_w': 0.00025,
+			'eps_b': 0.00025,
 			'eps_decay': 9,
-			'eps_intvl': 10,
+			'eps_intvl': 0,
 			'eps_satr': 'inf',
 			'mu': 0.7,
 			'l2': 0.95,
 			'RMSProp': True,
 			'RMSProp_decay': 0.9,
-			'minsq_RMSProp': 0.01,
-		},
-
-		{
-			'epochs': 10,
-			'batch_size': 500,
-			'view_kernels': False,
-			'view_recon': True,
-			'no_images': 12,
-			'eps_w': 0.005,
-			'eps_b': 0.005,
-			'eps_decay': 9,
-			'eps_intvl': 10,
-			'eps_satr': 'inf',
-			'mu': 0.7,
-			'l2': 0.95,
-			'RMSProp': True,
-			'RMSProp_decay': 0.9,
-			'minsq_RMSProp': 0.01,
+			'minsq_RMSProp': 0.01
 		}
 	]
 
@@ -832,9 +822,37 @@ def testPongMoves():
 	ae.train(train_data, test_data, layers, hyperparams)
 
 
+def getEncodedPong():
+
+	print "Loading pong images..."
+	f = open('data/pongs', 'r')
+	data = cpkl.load(f)
+	state, nxt_state = data['train'], data['test']
+	f.close()
+
+	ae = ConvAE()
+	ae.loadModel('convaeModel')
+	encoder = ae.layers[ae.idx:]
+	phi_s, phi_s_prime = ae.feedf(encoder, state), ae.feedf(encoder, nxt_state)
+
+	f = open('data/encoded_mem', 'w')
+	d = {
+    		'phi_s': phi_s,
+    		'phi_s_prime': phi_s_prime
+    	}
+	cpkl.dump(d, f, 1)
+	f.close()
+
+	print state.shape
+	print phi_s.shape
+	print "Done."
+
+
+
 
 if __name__ == '__main__':
 
 	#testMnist()
 	#testTorontoFaces()
-	testPongMoves()
+	#testPongMoves()
+	getEncodedPong()
