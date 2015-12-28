@@ -208,7 +208,6 @@ def maxpool(data, factor, getPos=True):
 	return pooled, positions
 
 
-
 class PoolLayer():
 	"""
 	Pooling layer class.
@@ -427,26 +426,35 @@ class ConvAE():
 	Convolutional Autoencoder class.
 	"""
 
-	def __init__(self, layers=[]):
+	def __init__(self):
 		"""
 		Initialize autoencoder.
+		"""
+
+		self.layers, self.idx = [], 0
+
+
+	def reflect(self, layer):
+		"""
+		Get a reflected copy of the given layer.
 
 		Args:
 		-----
-			layers: List of convolutional and pooling layers arranged heirarchically.
+			layer: An encoding convolutional/pooling layer.
+
+		Returns:
+		--------
+			An array containing the corresponding decoding layer.
 		"""
-		self.layers, self.encodeInd = [], 0
 
-		if layers != []:
-
-			for ind in xrange(len(layers) - 1, -1, -1):
-				self.layers = self.layers + self.reflect(layers[ind])
-
-			self.layers = self.layers + deepcopy(layers)
-			self.encodeInd = len(layers)
+		if isinstance(layer, ConvLayer):
+			k = layer.kernels.shape
+			return [ConvLayer(k[1], k[0], (k[2], k[3]), layer.o_type, layer.stride[0], layer.init_w, layer.init_b, True)]
+		elif isinstance(layer, PoolLayer):
+			return [PoolLayer(layer.factor, layer.type, True)]
 
 
-	def train(self, data, test, params):
+	def train(self, data, test, layers, hyperparams):
 		"""
 		Train autoencoder to learn a compressed feature representation of data using
 		the given params.
@@ -455,68 +463,102 @@ class ConvAE():
 		-----
 			data : A no_imgs x img_length x img_width x no_channels array of images.
 			test : A no_imgs x img_length x img_width x no_channels array of images.
-			params: A dictionary of training parameters.
+			params: A list of training parameters for each layer.
 		"""
+
+		params = None
+
+		if len(hyperparams) == 1:
+			params == hyperparams
+		else: 
+			assert len(hyperparams) == len([layer for layer in layers if isinstance(layer, ConvLayer)])
+
 
 		print "Training network..."
 		plt.ion()
-		N, itrs, errors = data.shape[0], 0, []
-		n = random.randint(0, N - (params['no_images'] + 1))
 
-		for epoch in xrange(params['epochs']):
+		decoder, encoder = self.layers[:self.idx], self.layers[self.idx:]
 
-			avg_errors = []
-			start, stop = range(0, N, params['batch_size']), range(params['batch_size'], N, params['batch_size'])
+		for i in xrange(len(layers) - 1, -1, -1):
 
-			for i, j in zip(start, stop):
+			print "Training layer " + str(i) + "..."
+
+			N, itrs, errors = train_data.shape[0], 0, []
+			n = random.randint(0, N - (params['no_images'] + 1))
+
+			self.layers, self.idx = self.reflect(layers[i]) + [layers[i]], 1
+
+			if isinstance(layers[i], PoolLayer):
+				decoder, encoder = decoder + self.layers[0], encoder + self.layers[1]
+				continue
+
+			if params is None:
+				params = hyperparams[i]
+
+			train_data, test_data = self.feedf(encoder, data), self.feedf(encoder, test)
+
+			for epoch in xrange(params['epochs']):
+
+				avg_errors = []
+				start, stop = range(0, N, params['batch_size']), range(params['batch_size'], N, params['batch_size'])
+
+				for i, j in zip(start, stop):
  
-				error = self.reconstruct(data[i:j]) - data[i:j] # euclidean dist.
+					error = self.feedf(self.layers, train_data[i:j]) - train_data[i:j] # euclidean dist.
+					self.backprop(error)
+					self.update(params, itrs)
+
+					avg_error = np.average(error)
+					print '\r| Epoch: {:5d}  |  Iteration: {:8d}  |  Avg Reconstruction Error: {:.2f}|'.format(epoch, itrs, avg_error)
+					if epoch != 0 and epoch % 100 == 0:
+  						print '---------------------------------------------------------------------------'
+
+  					itrs = itrs + 1
+  					avg_errors.append(avg_error)
+
+  				i = start[-1]
+  				error = self.feedf(self.layers, train_data[i:]) - train_data[i:]
 				self.backprop(error)
 				self.update(params, itrs)
 
 				avg_error = np.average(error)
-				print '\r| Epoch: {:5d}  |  Iteration: {:8d}  |  Avg Reconstruction Error: {:.2f}|'.format(epoch, itrs, avg_error)
+				print '\r| Epoch: {:5d}  |  Iteration: {:8d}  |  Avg Reconstruction Error: {:.2f} |'.format(epoch, itrs, avg_error)
 				if epoch != 0 and epoch % 100 == 0:
-  					print '---------------------------------------------------------------------------'
+  					print '----------------------------------------------------------------------------'
 
   				itrs = itrs + 1
   				avg_errors.append(avg_error)
 
-  			i = start[-1]
-  			recon = self.reconstruct(data[i:]) # to display
-  			error = recon - data[i:]
-			self.backprop(error)
-			self.update(params, itrs)
+  				# plotting sturvs
+  				plt.figure(2)
+  				plt.show()
+  				errors.append(np.average(avg_errors))
+  				plt.xlabel('Epochs')
+  				plt.ylabel('Reconstruction Error')
+  				plt.plot(range(epoch + 1), errors, '-g')
+  				plt.axis([0, params['epochs'], -255, 255])
+  				plt.draw()
+  				if params['view_kernels']:
+  					self.displayKernels()
+  				if params['view_recon']:
+  					recon = self.feedf(decoder + self.layers + encoder, data) #viewing pleasure
+  					self.display(recon[n : n + params['no_images']], 3)
+  					self.display(data[n : n + params['no_images']], 4)
 
-			avg_error = np.average(error)
-			print '\r| Epoch: {:5d}  |  Iteration: {:8d}  |  Avg Reconstruction Error: {:.2f} |'.format(epoch, itrs, avg_error)
-			if epoch != 0 and epoch % 100 == 0:
-  				print '----------------------------------------------------------------------------'
+		
 
-  			itrs = itrs + 1
-  			avg_errors.append(avg_error)
+			recon = self.feedf(self.layers, test_data)
+			print '\rAverage Reconstruction Error on test images: ', np.average(recon - test_data)
 
-  			# plotting sturvs
-  			plt.figure(2)
-  			plt.show()
-  			errors.append(np.average(avg_errors))
-  			plt.xlabel('Epochs')
-  			plt.ylabel('Reconstruction Error')
-  			plt.plot(range(epoch + 1), errors, '-g')
-  			plt.axis([0, params['epochs'], -255, 255])
-  			plt.draw()
-  			if params['view_kernels']:
-  				self.displayKernels()
-  			if params['view_recon']:
-  				self.display(recon[0 : params['no_images']], 3)
-  				self.display(data[i : i + params['no_images']], 4)
+			ans = raw_input("Done. Save layer and continue ? (y/n)")
+			if ans == "n":
+				break
+
+			decoder, encoder = decoder + self.layers[0], encoder + self.layers[1]
 
 		plt.ioff()
 
-		recon = self.reconstruct(test)
-		print '\rAverage Reconstruction Error on test images: ', np.average(recon - test)
-		self.display(recon[n : n + params['no_images']], 5)
-		self.display(test[n : n + params['no_images']], 6)
+		self.layers, self.idx = decoder + encoder, len(encoder) 
 
 		raw_input("Training complete. Press any key to continue.")
   		print "Saving model..."
@@ -538,22 +580,24 @@ class ConvAE():
 			error = layer.bprop(error)
 
 
-	def reconstruct(self, imgs):
+	def feedf(self, layers, imgs):
 		"""
-		Reconstruct the imgs from codings.
+		Feed the imgs through the given set of layers.
 
 		Args:
-		-----
+		----
+			layers: A set of layers arranged hierarchically.
 			imgs: A no_imgs x img_length x img_width x img_channels array.
 
 		Returns:
 		-------
 			A no_imgs x img_length x img_width x img_channels array.
 		"""
+
 		data = np.transpose(imgs, (0, 3, 1, 2))
 
-		for i in xrange(len(self.layers) - 1, - 1, -1):
-			data = self.layers[i].feedf(data)
+		for i in xrange(len(layers) - 1, - 1, -1):
+			data = layers[i].feedf(data)
 
 		return np.transpose(data, (0, 2, 3, 1))
 
@@ -571,43 +615,6 @@ class ConvAE():
 
 		for layer in self.layers:
 			layer.update(eps_w, eps_b, params['mu'], params['l2'], params['RMSProp'], params['RMSProp_decay'], params['minsq_RMSProp'])
-
-
-	def saveModel(self, filename):
-		"""
-		Save the current network model in file filename.
-
-		Args:
-		-----
-			filename: String repr. name of file.
-		"""
-		model = {
-			'network': self.layers,
-			'index': self.encodeInd
-		}
-
-		f = open(filename, 'w')
-		cpkl.dump(model, f, 1)
-		f.close()
-
-
-	def loadModel(self, filename):
-		"""
-		Load an empty architecture with the network model
-		saved in file filename.
-
-		Args:
-		-----
-			filename: String repr. name of file.
-		"""
-		f = open(filename, 'r')
-		model = cpkl.load(f)
-
-		if model != {} and self.layers == []:
-			self.layers = model["network"]
-			self.encodeInd = model["index"]
-
-		f.close()
 
 
 	def displayKernels(self):
@@ -652,24 +659,41 @@ class ConvAE():
 		plt.draw()
 
 
-	def reflect(self, layer):
+	def saveModel(self, filename):
 		"""
-		Get a reflected copy of the given encoding layer.
+		Save the current network model in file filename.
 
 		Args:
 		-----
-			layer: An encoding layer.
-
-		Returns:
-		--------
-			A single element array containing the decoding layer.
+			filename: String repr. name of file.
 		"""
+		model = {
+			'layers': self.layers,
+			'idx': self.idx
+		}
 
-		if isinstance(layer, ConvLayer):
-			k = layer.kernels.shape
-			return [ConvLayer(k[1], k[0], (k[2], k[3]), layer.o_type, layer.stride[0], layer.init_w, layer.init_b, True)]
-		elif isinstance(layer, PoolLayer):
-			return [PoolLayer(layer.factor, layer.type, True)]
+		f = open(filename, 'w')
+		cpkl.dump(model, f, 1)
+		f.close()
+
+
+	def loadModel(self, filename):
+		"""
+		Load an empty architecture with the network model
+		saved in file filename.
+
+		Args:
+		-----
+			filename: String repr. name of file.
+		"""
+		f = open(filename, 'r')
+		model = cpkl.load(f)
+
+		if model != {} and self.layers == []:
+			self.layers = model["layers"]
+			self.idx = model["idx"]
+
+		f.close()
 
 
 def testMnist():
@@ -788,6 +812,7 @@ def testTorontoFaces():
 	}
 
 	ae = ConvAE(layers)
+	print "Len layers: ", len(ae.layers)
 	ae.train(train_data, test_data, params)
 
 
@@ -805,26 +830,51 @@ def testPong():
 	print "Creating network..."
 
 	layers = [
+				ConvLayer(16, 8, (4, 4), stride=2),
 				ConvLayer(8, 4, (5, 5), stride=3)
 			]
 
-	params = {
-		'epochs': 50,
-		'batch_size': 500,
-		'view_kernels': False,
-		'view_recon': True,
-		'no_images': 12,
-		'eps_w': 0.005,
-		'eps_b': 0.005,
-		'eps_decay': 9,
-		'eps_intvl': 10,
-		'eps_satr': 'inf',
-		'mu': 0.7,
-		'l2': 0.95,
-		'RMSProp': True,
-		'RMSProp_decay': 0.9,
-		'minsq_RMSProp': 0.01,
-	}
+	params = [
+	
+		{
+			'epochs': 50,
+			'batch_size': 500,
+			'view_kernels': False,
+			'view_recon': True,
+			'no_images': 12,
+			'eps_w': 0.005,
+			'eps_b': 0.005,
+			'eps_decay': 9,
+			'eps_intvl': 10,
+			'eps_satr': 'inf',
+			'mu': 0.7,
+			'l2': 0.95,
+			'RMSProp': True,
+			'RMSProp_decay': 0.9,
+			'minsq_RMSProp': 0.01,
+		},
+
+		{
+			'train': True,
+			'import': False,
+			'model_filename': '',
+			'epochs': 50,
+			'batch_size': 500,
+			'view_kernels': False,
+			'view_recon': True,
+			'no_images': 12,
+			'eps_w': 0.005,
+			'eps_b': 0.005,
+			'eps_decay': 9,
+			'eps_intvl': 10,
+			'eps_satr': 'inf',
+			'mu': 0.7,
+			'l2': 0.95,
+			'RMSProp': True,
+			'RMSProp_decay': 0.9,
+			'minsq_RMSProp': 0.01,
+		}
+	]
 
 	ae = ConvAE(layers)
 	ae.train(train_data, test_data, params)
@@ -834,5 +884,5 @@ def testPong():
 if __name__ == '__main__':
 
 	#testMnist()
-	#testTorontoFaces()
-	testPong()
+	testTorontoFaces()
+	#testPong()
