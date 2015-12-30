@@ -210,7 +210,16 @@ def maxpool(data, factor, getPos=True):
 
 def addNoise(data, p=0.5):
 	"""
-	Add noise to the input by randomly setting bits to 0.
+	Add noise to the input by randomly setting a pixel to 0.
+
+	Args:
+	----
+		data: A no_imgs x img_length x img_width x no_channels array of images
+		p: Probability of pertubing a pixel.
+
+	Returns:
+	-------
+		A noisy version of the given data.
 	"""
 	return np.random.binomial(1, p, data.shape) * data
 
@@ -471,6 +480,7 @@ class ConvAE():
 		-----
 			data : A no_imgs x img_length x img_width x no_channels array of images.
 			test : A no_imgs x img_length x img_width x no_channels array of images.
+			layers: A list of hierarchically arranged pooling/convolutional layers.
 			hyperparams: A list of training hyperparameters for each layer.
 		"""
 		print "Training network..."
@@ -483,7 +493,7 @@ class ConvAE():
 			for layer in layers:
 				self.layers =  self.reflect(layer) + self.layers + layer
 
-			self.train(data, test, params, n)
+			self.train(data, test, hyperparams['conv'][0], n)
 			self.saveModel('convaeModel')
 		else:
 
@@ -491,7 +501,7 @@ class ConvAE():
 			decoder, encoder = self.layers[:idx], self.layers[idx:]
 
 			if len(hyperparams['conv']) == 1:
-				params == hyperparams['conv']
+				params == hyperparams['conv'][0]
 			else: #ensure params for each conv layer.
 				assert len(hyperparams['conv']) == len([layer for layer in layers if isinstance(layer, ConvLayer)])
 
@@ -502,7 +512,8 @@ class ConvAE():
 				self.layers = self.reflect(layers[i]) + [layers[i]]
 				
 				if isinstance(layers[i], ConvLayer):
-					if params is None: params = hyperparams[i]
+					if params is None:
+						params = hyperparams['conv'][i]
 					self.train(self.feedf(encoder, data), self.feedf(encoder, test), params, n, decoder + encoder)
 
 				decoder, encoder = decoder + [self.layers[0]], encoder + [self.layers[1]]
@@ -522,9 +533,8 @@ class ConvAE():
   		----
   			data : A no_imgs x img_length x img_width x no_channels array of images.
 			test : A no_imgs x img_length x img_width x no_channels array of images.
-			layers: A set of convolutional/pooling layers.
 			params: A list of training hyperparameters for each layer.
-			noise: Probability of corrupting a pixel in the image.
+			prev_layers: A list of decoding and encoding convolutional/pooling layers.
 		"""			
 		N, itrs, errors = data.shape[0], 0, []
 			
