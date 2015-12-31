@@ -485,15 +485,16 @@ class ConvAE():
 		"""
 		print "Training network..."
 		N = data.shape[0]
-		n = random.randint(0, N - (hyperparams['no_images'] + 1))
+		i = random.randint(0, N - (hyperparams['no_images'] + 1))
+		no = (i, i + hyperparams['no_images'])
 		plt.ion()
 
 		if not hyperparams['layer_wise']:
 
 			for layer in layers:
-				self.layers =  self.reflect(layer) + self.layers + layer
+				self.layers =  self.reflect(layer) + self.layers + [layer]
 
-			self.train(data, test, hyperparams['conv'][0], n)
+			self.train(data, test, hyperparams['conv'][0], no)
 			self.saveModel('convaeModel')
 		else:
 
@@ -514,7 +515,7 @@ class ConvAE():
 				if isinstance(layers[i], ConvLayer):
 					if params is None:
 						params = hyperparams['conv'][i]
-					self.train(self.feedf(encoder, data), self.feedf(encoder, test), params, n, decoder + encoder)
+					self.train(self.feedf(encoder, data), self.feedf(encoder, test), params, no, decoder + encoder)
 
 				decoder, encoder = decoder + [self.layers[0]], encoder + [self.layers[1]]
 				self.layers = decoder + encoder
@@ -524,7 +525,7 @@ class ConvAE():
   		print "Training complete."
 
 
-  	def train(self, data, test, no, params, prev_layers=[]):
+  	def train(self, data, test, params, no, prev_layers=[]):
   		"""
   		Train the given layers on the given data using the provided
   		hyperparams.
@@ -534,13 +535,14 @@ class ConvAE():
   			data : A no_imgs x img_length x img_width x no_channels array of images.
 			test : A no_imgs x img_length x img_width x no_channels array of images.
 			params: A list of training hyperparameters for each layer.
+			no: Tuple indicating start and stop indices of images to display.
 			prev_layers: A list of decoding and encoding convolutional/pooling layers.
 		"""			
 		N, itrs, errors = data.shape[0], 0, []
 			
 		for epoch in xrange(params['epochs']):
 
-			avg_error, start, stop = [], range(0, N, params['batch_size']), range(params['batch_size'], N, params['batch_size'])
+			avg_errors, start, stop = [], range(0, N, params['batch_size']), range(params['batch_size'], N, params['batch_size'])
 			for i, j in zip(start, stop):
  
 				corrupt_train = addNoise(data[i:j], params['pert_prob'])
@@ -580,13 +582,13 @@ class ConvAE():
   			if params['view_kernels']:
   				self.displayKernels()
   			if params['view_recon']:
-  				imgs, idx = data[no : no + params['no_images']], len(prev_layers) / 2
+  				imgs, idx = data[no[0] : no[1]], len(prev_layers) / 2
   				recon = self.feedf(prev_layers[:idx] + self.layers + prev_layers[idx:], imgs) #viewing pleasure
   				self.display(recon, 3)
   				self.display(imgs, 4)
 
-		recon = self.feedf(self.layers, test_data)
-		print '\rAverage Reconstruction Error on test images: ', np.average(np.absolute(recon - test_data))
+		recon = self.feedf(self.layers, test)
+		print '\rAverage Reconstruction Error on test images: ', np.average(np.absolute(recon - test))
 			
 
 	def backprop(self, dE):
